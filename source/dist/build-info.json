@@ -2,7 +2,7 @@
   "version": "1.3.0",
   "versionName": "1.3.0 Stability Release",
   "baseline": "BossPilot v1.2.37 (based on JobClaw)",
-  "builtAt": "2026-07-27T13:46:35.885Z",
+  "builtAt": "2026-07-27T15:50:29.646Z",
   "runtimeModules": [
     "lib/conversation-identity.js",
     "lib/task-state.js",

@@ -5,13 +5,18 @@ const common = await readFile('src/common.js', 'utf8');
 const sidepanel = await readFile('src/sidepanel.js', 'utf8');
 const html = await readFile('public/sidepanel.html', 'utf8');
 
-const analyzeStart = background.indexOf('async function analyzeJob(job)');
+const analyzeStart = background.indexOf('async function analyzeJob(job');
 const analyzeEnd = background.indexOf('function createTasks(', analyzeStart);
 if (analyzeStart < 0 || analyzeEnd < 0) throw new Error('岗位匹配函数缺失');
 const analyzeBody = background.slice(analyzeStart, analyzeEnd);
 
-for (const token of ['buildJobMatchProfile', 'profileFacts', 'matchedSkills', '"score":0', '"decision":"recommend|cautious|reject"', 'maxTokens: 900']) {
+for (const token of ['buildJobMatchProfile', 'profileFacts', 'matchedSkills']) {
   if (!analyzeBody.includes(token)) throw new Error(`岗位匹配精简输入/输出缺失：${token}`);
+}
+
+// 评分维度和 JSON 输出格式在评分 rubric 常量中定义
+for (const token of ['"score":0', '"decision":"recommend|cautious|reject"', 'JOB_MATCH_SCORING_RUBRIC']) {
+  if (!background.includes(token)) throw new Error(`岗位匹配评分规则缺失：${token}`);
 }
 for (const forbidden of ['resumeText', '"greeting"', 'normalizeApplicantGreeting']) {
   if (analyzeBody.includes(forbidden)) throw new Error(`岗位匹配仍包含高消耗或招呼语逻辑：${forbidden}`);

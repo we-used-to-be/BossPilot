@@ -969,6 +969,18 @@ function publicState(all) {
     const { name, type, size, lastModified } = state.resumeSourceFile;
     state.resumeSourceFile = { name, type, size, lastModified, stored: true };
   }
+  // 返回 aiStats 摘要（不含详细 records）
+  if (state.aiStats) {
+    state.aiStats = {
+      totalCalls: state.aiStats.totalCalls || 0,
+      totalInputTokens: state.aiStats.totalInputTokens || 0,
+      totalOutputTokens: state.aiStats.totalOutputTokens || 0,
+      totalTokens: state.aiStats.totalTokens || 0,
+      failedCalls: state.aiStats.failedCalls || 0,
+      byModel: state.aiStats.byModel || {},
+      byType: state.aiStats.byType || {}
+    };
+  }
   return state;
 }
 
@@ -1423,18 +1435,32 @@ async function requestModel(url, payload, apiKey, timeoutMs = 90000) {
   }
 }
 
+function getAiModeConfig(mode) {
+  const modes = {
+    economy:  { temperature: 0.3, maxTokens: 400,  label: '节省模式' },
+    balanced: { temperature: 0.1, maxTokens: 1200, label: '平衡模式' },
+    precise:  { temperature: 0.03, maxTokens: 2800, label: '精准模式' }
+  };
+  return modes[mode] || modes.balanced;
+}
+
 async function callModel(messages, jsonMode = true, options = {}) {
   const { config } = await storage.get('config');
   const model = config?.model || {};
   if (!model.apiKey) throw aiError('AI_CONFIG', '请先在设置页填写 AI API Key');
   const url = `${String(model.baseUrl || 'https://api.deepseek.com').replace(/\/$/, '')}/chat/completions`;
+
+  const modeConfig = getAiModeConfig(config.aiMode);
   const payload = {
     model: model.model || 'deepseek-v4-pro',
     messages,
-    temperature: Number(options.temperature ?? model.temperature ?? 0.1),
-    max_tokens: Number(options.maxTokens ?? 2800)
+    temperature: Number(options.temperature ?? modeConfig.temperature ?? model.temperature ?? 0.1),
+    max_tokens: Number(options.maxTokens ?? modeConfig.maxTokens ?? 2800)
   };
   if (jsonMode) payload.response_format = { type: 'json_object' };
+
+  const requestType = String(options.requestType || 'unknown');
+  const startTime = Date.now();
 
   let response = await requestModel(url, payload, model.apiKey, Number(options.timeoutMs || 90000));
   let bodyText = await response.text();
@@ -1448,17 +1474,54 @@ async function callModel(messages, jsonMode = true, options = {}) {
   }
 
   if (!response.ok) {
-    throw aiError('AI_HTTP', `AI 请求失败 HTTP ${response.status}: ${bodyText.substring(0, 500)}`, { status: response.status });
+    const errorMsg = `AI 请求失败 HTTP ${response.status}: ${bodyText.substring(0, 500)}`;
+    await recordAiUsage({
+      requestType,
+      modelName: payload.model,
+      inputTokens: estimateTokenCount(messages),
+      outputTokens: 0,
+      totalTokens: 0,
+      durationMs: Date.now() - startTime,
+      success: false,
+      error: errorMsg
+    });
+    throw aiError('AI_HTTP', errorMsg, { status: response.status });
   }
 
   let result;
   try {
     result = JSON.parse(bodyText);
   } catch {
+    await recordAiUsage({
+      requestType,
+      modelName: payload.model,
+      inputTokens: estimateTokenCount(messages),
+      outputTokens: 0,
+      totalTokens: 0,
+      durationMs: Date.now() - startTime,
+      success: false,
+      error: 'AI 接口返回了无法识别的响应'
+    });
     throw aiError('AI_INVALID_RESPONSE', 'AI 接口返回了无法识别的响应');
   }
   const choice = result.choices?.[0];
   const content = String(choice?.message?.content || '').trim();
+  const usage = result.usage || {};
+
+  const inputTokens = Number(usage.prompt_tokens || 0) || estimateTokenCount(messages);
+  const outputTokens = Number(usage.completion_tokens || 0) || estimateTokenCount(content);
+  const totalTokens = Number(usage.total_tokens || 0) || inputTokens + outputTokens;
+
+  await recordAiUsage({
+    requestType,
+    modelName: payload.model,
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    durationMs: Date.now() - startTime,
+    success: true
+  });
+
   if (!content) throw aiError('AI_EMPTY', 'AI 返回为空');
   if (choice.finish_reason === 'length') {
     throw aiError('AI_TRUNCATED', 'AI 输出被截断', { finishReason: choice.finish_reason, partial: content });
@@ -1469,6 +1532,59 @@ async function callModel(messages, jsonMode = true, options = {}) {
   } catch (error) {
     throw aiError('AI_INVALID_JSON', `AI 返回 JSON 不完整：${error?.message || '解析失败'}`, { partial: content });
   }
+}
+
+function estimateTokenCount(input) {
+  if (typeof input === 'string') return Math.ceil(input.length * 0.4);
+  if (Array.isArray(input)) {
+    return input.reduce((sum, msg) => sum + estimateTokenCount(String(msg.content || '')), 0);
+  }
+  return Math.ceil(JSON.stringify(input).length * 0.4);
+}
+
+async function recordAiUsage(entry) {
+  const { aiStats } = await storage.get('aiStats');
+  const stats = { ...(DEFAULTS.aiStats), ...(aiStats || {}) };
+  stats.totalCalls = (stats.totalCalls || 0) + 1;
+  if (!entry.success) {
+    stats.failedCalls = (stats.failedCalls || 0) + 1;
+  } else {
+    stats.totalInputTokens = (stats.totalInputTokens || 0) + entry.inputTokens;
+    stats.totalOutputTokens = (stats.totalOutputTokens || 0) + entry.outputTokens;
+    stats.totalTokens = (stats.totalTokens || 0) + entry.totalTokens;
+  }
+  const modelName = String(entry.modelName || 'unknown');
+  if (!stats.byModel) stats.byModel = {};
+  if (!stats.byModel[modelName]) stats.byModel[modelName] = { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  stats.byModel[modelName].calls += 1;
+  if (entry.success) {
+    stats.byModel[modelName].inputTokens += entry.inputTokens;
+    stats.byModel[modelName].outputTokens += entry.outputTokens;
+    stats.byModel[modelName].totalTokens += entry.totalTokens;
+  }
+  const type = String(entry.requestType || 'unknown');
+  if (!stats.byType) stats.byType = {};
+  if (!stats.byType[type]) stats.byType[type] = { calls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  stats.byType[type].calls += 1;
+  if (entry.success) {
+    stats.byType[type].inputTokens += entry.inputTokens;
+    stats.byType[type].outputTokens += entry.outputTokens;
+    stats.byType[type].totalTokens += entry.totalTokens;
+  }
+  if (!stats.records) stats.records = [];
+  stats.records.unshift({
+    ts: Date.now(),
+    requestType: type,
+    modelName,
+    inputTokens: entry.inputTokens,
+    outputTokens: entry.outputTokens,
+    totalTokens: entry.totalTokens,
+    durationMs: entry.durationMs || 0,
+    success: Boolean(entry.success),
+    error: entry.success ? undefined : String(entry.error || '').slice(0, 200)
+  });
+  stats.records = stats.records.slice(0, 200);
+  await storage.set({ aiStats: stats });
 }
 
 function cleanResumeText(value) {
@@ -1785,7 +1901,7 @@ async function buildProfile(resumeText) {
         content: `你是严格的职业画像分析器。只能使用简历真实事实，不能根据项目业务场景推断用户职业。主方向最多3个，搜索词必须是真实岗位名称。数组必须精简，教育/经历/项目各最多4条，每条不超过80字，技能最多15个，摘要不超过180字。即使信息不完整，也必须给出可编辑初稿，禁止返回空内容。输出严格 JSON：${schema}`
       },
       { role: 'user', content: text.slice(0, 22000) }
-    ], true, { maxTokens: 4200, temperature: 0.05 }));
+    ], true, { maxTokens: 4200, temperature: 0.05, requestType: 'profile_generation' }));
     return mergeProfileWithFallback(profile, fallback);
   } catch (error) {
     firstError = error;
@@ -1801,7 +1917,7 @@ async function buildProfile(resumeText) {
           content: `你是求职职业画像分析器。只使用简历事实。请输出极简 JSON，不要解释，不要证据长句。摘要120字以内；主方向最多3个；搜索词最多10个；技能最多12个；其余字段简短。输出结构：${compactSchema}`
         },
         { role: 'user', content: text.slice(0, 18000) }
-      ], true, { maxTokens: 2200, temperature: 0.05 }));
+      ], true, { maxTokens: 2200, temperature: 0.05, requestType: 'profile_generation_compact' }));
       return mergeProfileWithFallback(compactProfileToFull(compact, fallback), fallback, {
         mode: 'ai-compact-retry',
         label: 'AI 精简重试结果',
@@ -2305,7 +2421,7 @@ async function generateApplicantGreeting(job, analysis) {
 匹配结果：${JSON.stringify(analysis)}
 相关简历信息：${JSON.stringify(relevantGreetingFacts(profileFacts, analysis))}`
       }
-    ], true, { maxTokens: 500, temperature: 0.2 });
+    ], true, { maxTokens: 500, temperature: 0.2, requestType: 'greeting' });
     return normalizeApplicantGreeting(result, job, stored.profile);
   } catch {
     return fallbackApplicantGreeting(job, stored.profile);
@@ -2323,32 +2439,109 @@ async function ensurePendingGreeting(item, requestedGreeting = '') {
   };
 }
 
-async function analyzeJob(job) {
+const JOB_MATCH_SCORING_ECONOMY = `你是岗位匹配器。按技能(40分)、项目(25分)、方向(15分)、学历经验(15分)、其他(5分)评分。硬性不匹配→reject。≥75 recommend，45-74 cautious，<45 reject。只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":"","scoringDetail":{"skillMatch":0,"projectMatch":0,"directionMatch":0,"hardReqMatch":0,"otherFactors":0}}`;
+
+const JOB_MATCH_SCORING_RUBRIC = `你是为求职者服务的岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。
+
+评分规则（总分 100，按以下维度加权计算）：
+
+1. 技能匹配（满分 40 分）：逐项对比岗位 JD 技能要求与求职者技能列表。每项核心技能匹配得 8-10 分，部分匹配得 4-7 分，不匹配得 0 分。无明确技能要求时默认 20 分。
+2. 项目经验匹配（满分 25 分）：项目技术栈、业务领域与岗位的契合度。高度相关 20-25 分，部分相关 10-19 分，不相关 0-9 分。
+3. 岗位方向匹配（满分 15 分）：求职者 primaryDirections 与岗位 title/方向的一致性。完全一致 12-15 分，同领域 6-11 分，不同领域 0-5 分。
+4. 学历/经验要求（满分 15 分）：学历达标 8 分（不达标 0 分，无要求默认 6 分），经验年限达标 7 分（不达标 0 分，无要求默认 5 分）。硬性不满足时本项为 0 分。
+5. 其他因素（满分 5 分）：地点匹配 +2 分，薪资匹配 +2 分，雇佣类型匹配 +1 分。
+
+决策规则：
+- 硬性不匹配（学历/经验/地点 完全不满足）→ decision 必须为 "reject"，score ≤ 30
+- score ≥ 75 → "recommend"
+- 45 ≤ score < 75 → "cautious"
+- score < 45 → "reject"
+
+只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":"","scoringDetail":{"skillMatch":0,"projectMatch":0,"directionMatch":0,"hardReqMatch":0,"otherFactors":0}}`;
+
+const JOB_MATCH_SCORING_PRECISE = `你是为求职者服务的资深岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。请仔细分析每一项维度后给出评分。
+
+评分规则（总分 100，按以下维度加权计算）：
+
+1. 技能匹配（满分 40 分）：逐项对比岗位 JD 技能要求与求职者技能列表。每项核心技能精确匹配得 8-10 分，部分匹配（同类技术或可迁移技能）得 4-7 分，不匹配得 0 分。无明确技能要求时默认 20 分。请列出每项技能的匹配判断依据。
+2. 项目经验匹配（满分 25 分）：分析项目技术栈、业务领域与岗位的契合度，以及项目复杂度是否匹配岗位级别。高度相关且复杂度匹配 20-25 分，部分相关 10-19 分，不相关 0-9 分。
+3. 岗位方向匹配（满分 15 分）：求职者 primaryDirections 与岗位 title/方向的一致性。完全一致（同岗位名称）12-15 分，同领域（如前端 vs 全栈）6-11 分，不同领域 0-5 分。
+4. 学历/经验要求（满分 15 分）：学历达标 8 分（不达标 0 分，无要求默认 6 分），经验年限达标 7 分（不达标 0 分，无要求默认 5 分）。硬性不满足时本项为 0 分。
+5. 其他因素（满分 5 分）：地点匹配 +2 分，薪资范围匹配 +2 分，雇佣类型（全职/实习/兼职）匹配 +1 分。
+
+决策规则：
+- 硬性不匹配（学历/经验/地点 完全不满足）→ decision 必须为 "reject"，score ≤ 30
+- score ≥ 75 → "recommend"
+- 45 ≤ score < 75 → "cautious"
+- score < 45 → "reject"
+
+reason 字段应详细说明评分依据，至少 80 字。
+
+只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":"","scoringDetail":{"skillMatch":0,"projectMatch":0,"directionMatch":0,"hardReqMatch":0,"otherFactors":0}}`;
+
+async function buildJobCacheKey(job, profileFacts) {
+  const jobId = String(job.jobId || job.encryptJobId || job.url || '');
+  const jdSummary = String(job.title || '') + '|' + String(job.company || '') + '|' + String(job.description || '').slice(0, 600);
+  const jdHash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(jdSummary));
+  const jdHashHex = [...new Uint8Array(jdHash)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+  const { resumeHash } = await storage.get('resumeHash');
+  return `${jobId}_${jdHashHex}_${resumeHash || 'no-resume'}`;
+}
+
+async function analyzeJob(job, forceRefresh = false) {
   const { profile, config } = await storage.get(['profile', 'config']);
   if (!profile) throw new Error('请先生成职业画像');
   const { profileFacts } = await ensureProfileFacts();
+
+  // 缓存检查
+  const { jobCache } = await storage.get('jobCache');
+  const cache = jobCache || {};
+  const cacheKey = await buildJobCacheKey(job, profileFacts);
+  if (!forceRefresh && cache[cacheKey]) {
+    return cache[cacheKey];
+  }
+
+  const aiMode = config.aiMode || 'balanced';
+  const systemPrompt = aiMode === 'economy' ? JOB_MATCH_SCORING_ECONOMY
+    : aiMode === 'precise' ? JOB_MATCH_SCORING_PRECISE
+    : JOB_MATCH_SCORING_RUBRIC;
+
   const result = await callModel([
-    {
-      role: 'system',
-      content: '你是为求职者服务的岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。先判断学历、经验、地点等硬条件，再判断方向与技能；存在硬性不匹配时 decision 必须为 reject，并写入 risks。只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":""}。'
-    },
-    {
-      role: 'user',
-      content: `职业画像与结构化简历：${JSON.stringify(buildJobMatchProfile(profile, profileFacts))}
+      {
+        role: 'system',
+        content: systemPrompt
+      },
+      {
+        role: 'user',
+        content: `职业画像与结构化简历：${JSON.stringify(buildJobMatchProfile(profile, profileFacts))}
 岗位：${JSON.stringify(job)}`
-    }
-  ], true, { maxTokens: 900, temperature: 0.05 });
+      }
+    ], true, { requestType: 'job_analysis' });
   const normalized = {
     score: Math.max(0, Math.min(100, Number(result.score || 0))),
     decision: ['recommend', 'cautious', 'reject'].includes(result.decision) ? result.decision : 'cautious',
     matchedSkills: normalizeStringList(result.matchedSkills, 12),
     gaps: normalizeStringList(result.gaps, 10),
     risks: normalizeStringList(result.risks, 10),
-    reason: String(result.reason || '').trim().slice(0, 480)
+    reason: String(result.reason || '').trim().slice(0, 480),
+    scoringDetail: result.scoringDetail && typeof result.scoringDetail === 'object'
+      ? {
+          skillMatch: Math.max(0, Math.min(40, Number(result.scoringDetail.skillMatch || 0))),
+          projectMatch: Math.max(0, Math.min(25, Number(result.scoringDetail.projectMatch || 0))),
+          directionMatch: Math.max(0, Math.min(15, Number(result.scoringDetail.directionMatch || 0))),
+          hardReqMatch: Math.max(0, Math.min(15, Number(result.scoringDetail.hardReqMatch || 0))),
+          otherFactors: Math.max(0, Math.min(5, Number(result.scoringDetail.otherFactors || 0)))
+        }
+      : null
   };
   if (normalized.score < Number(config?.minScore || 75) && normalized.decision === 'recommend') {
     normalized.decision = 'cautious';
   }
+
+  // 写入缓存
+  cache[cacheKey] = normalized;
+  await storage.set({ jobCache: cache });
+
   return normalized;
 }
 
@@ -2668,6 +2861,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
             : oldKey
         };
         incoming.executionMode = incoming.executionMode === 'auto' ? 'auto' : 'review';
+        incoming.aiMode = ['economy', 'balanced', 'precise'].includes(incoming.aiMode) ? incoming.aiMode : 'balanced';
         incoming.dailyTarget = Math.max(1, Math.min(300, Number(incoming.dailyTarget || config?.dailyTarget || 150)));
         incoming.discoveryLimit = 0;
         incoming.customInstruction = String(incoming.customInstruction || incoming.customPrompt || '').trim().slice(0, 1600);
@@ -2879,10 +3073,37 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       }
       case 'TEST_AI': {
         const text = await callModel([
-          { role: 'system', content: '只回复“连接正常”。' },
+          { role: 'system', content: '只回复"连接正常"。' },
           { role: 'user', content: '测试连接' }
-        ], false);
+        ], false, { requestType: 'test_connection' });
         reply({ ok: true, text });
+        break;
+      }
+      case 'GET_AI_STATS': {
+        const { aiStats } = await storage.get('aiStats');
+        reply({ ok: true, aiStats: aiStats || DEFAULTS.aiStats });
+        break;
+      }
+      case 'CLEAR_AI_STATS': {
+        await storage.set({ aiStats: DEFAULTS.aiStats });
+        reply({ ok: true });
+        break;
+      }
+      case 'GET_JOB_CACHE': {
+        const { jobCache } = await storage.get('jobCache');
+        reply({ ok: true, cache: jobCache || {} });
+        break;
+      }
+      case 'CLEAR_JOB_CACHE': {
+        const { jobCache } = await storage.get('jobCache');
+        const key = message.cacheKey;
+        if (key && jobCache) {
+          delete jobCache[key];
+          await storage.set({ jobCache });
+        } else {
+          await storage.set({ jobCache: {} });
+        }
+        reply({ ok: true });
         break;
       }
       case 'PROBE_BOSS': {
@@ -2957,7 +3178,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         reply({ ok: true });
         break;
       case 'AI_JOB':
-        reply({ ok: true, result: await analyzeJob(message.job) });
+        reply({ ok: true, result: await analyzeJob(message.job, Boolean(message.forceRefresh)) });
         break;
       case 'CHAT_BINDING_PREPARE': {
         if (!message.pendingId || !message.expected) throw new Error('岗位与 HR 会话绑定信息不完整');

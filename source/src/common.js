@@ -5,6 +5,7 @@ export const DEFAULTS = {
     discoveryLimit: 0,
     aiLimit: 0,
     minScore: 75,
+    aiMode: 'balanced',
     targetLocations: [],
     employmentTypes: ['不限'],
     experiences: [],
@@ -43,6 +44,17 @@ export const DEFAULTS = {
     replied: 0,
     interviews: 0
   },
+  aiStats: {
+    totalCalls: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalTokens: 0,
+    failedCalls: 0,
+    byModel: {},
+    byType: {},
+    records: []
+  },
+  jobCache: {},
   workflow: {
     running: false,
     paused: true,

@@ -9,7 +9,7 @@ const PROFILE_FORM_IDS = [
 const SETTINGS_FORM_IDS = [
   'locations', 'types', 'experience', 'degree', 'salary', 'minScore',
   'dailyTarget', 'betweenJobsSeconds', 'attachmentDelaySeconds', 'sendImage', 'sendOnline',
-  'baseUrl', 'modelName', 'apiKey', 'customInstruction'
+  'baseUrl', 'modelName', 'apiKey', 'customInstruction', 'aiMode'
 ];
 const FORM_IDS = new Set(['resumeText', ...PROFILE_FORM_IDS, ...SETTINGS_FORM_IDS]);
 const dirtyFields = new Set();
@@ -1011,6 +1011,7 @@ function renderDynamic() {
   renderPending(state.pending);
   renderEvents('homeEvents', state.events);
   renderEvents('messageEvents', state.events);
+  updateAiModeButtons(state.config?.aiMode || 'balanced');
   updateUnsavedIndicators();
 }
 
@@ -1528,6 +1529,7 @@ async function saveSettings() {
   const config = {
     ...old,
     executionMode: old.executionMode === 'auto' ? 'auto' : 'review',
+    aiMode: getAiModeValue(),
     dailyTarget: Number($('dailyTarget').value || 150),
     discoveryLimit: 0,
     minScore: Number($('minScore').value || 75),
@@ -1566,10 +1568,82 @@ async function setExecutionMode(mode) {
   await refresh({ forms: false });
 }
 
+function getAiModeValue() {
+  const active = document.querySelector('[data-ai-mode].is-active');
+  return active?.dataset.aiMode || 'balanced';
+}
+
+function updateAiModeButtons(mode = 'balanced') {
+  for (const button of document.querySelectorAll('[data-ai-mode]')) {
+    button.classList.toggle('is-active', button.dataset.aiMode === mode);
+  }
+  const labels = { economy: '节省模式', balanced: '平衡模式', precise: '精准模式' };
+  setText('aiModePill', labels[mode] || '平衡模式');
+}
+
+async function setAiMode(mode) {
+  if (!['economy', 'balanced', 'precise'].includes(mode)) return;
+  const old = state.config || {};
+  if ((old.aiMode || 'balanced') === mode) return;
+  updateAiModeButtons(mode);
+  dirtyFields.add('aiMode');
+  updateUnsavedIndicators();
+}
+
+async function renderAiStats() {
+  try {
+    const response = await send('GET_AI_STATS');
+    if (!response.ok) return;
+    const stats = response.aiStats || {};
+    setText('aiStatCalls', stats.totalCalls || 0);
+    setText('aiStatInput', formatTokenCount(stats.totalInputTokens || 0));
+    setText('aiStatOutput', formatTokenCount(stats.totalOutputTokens || 0));
+    setText('aiStatFailed', stats.failedCalls || 0);
+    setText('aiStatsSummary', `累计调用 ${stats.totalCalls || 0} 次，消耗 ${formatTokenCount(stats.totalTokens || 0)}`);
+
+    // 按类型分组
+    const typeLabels = { profile_generation: '画像生成', profile_generation_compact: '画像精简', job_analysis: '岗位分析', greeting: '招呼语', test_connection: '连接测试', unknown: '其他' };
+    const byType = stats.byType || {};
+    let detailHtml = '';
+    for (const [type, data] of Object.entries(byType)) {
+      if (!data.calls) continue;
+      detailHtml += `<div class="ai-stats-row"><span>${typeLabels[type] || type}</span><span>${data.calls} 次 · ${formatTokenCount(data.totalTokens || 0)}</span></div>`;
+    }
+    if (detailHtml) {
+      setHtml('aiStatsDetail', detailHtml);
+    }
+  } catch {
+    // 静默失败
+  }
+}
+
+function formatTokenCount(count) {
+  const n = Number(count || 0);
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
+  return String(n);
+}
+
+function setHtml(id, html) {
+  const element = $(id);
+  if (element) element.innerHTML = html;
+}
+
 function bindActions() {
   for (const button of document.querySelectorAll('[data-execution-mode]')) {
     button.addEventListener('click', () => setExecutionMode(button.dataset.executionMode));
   }
+  for (const button of document.querySelectorAll('[data-ai-mode]')) {
+    button.addEventListener('click', () => setAiMode(button.dataset.aiMode));
+  }
+  $('refreshAiStats')?.addEventListener('click', renderAiStats);
+  $('clearAiStats')?.addEventListener('click', async () => {
+    const result = await send('CLEAR_AI_STATS');
+    if (result.ok) {
+      showToast('AI 统计已清除');
+      await renderAiStats();
+    }
+  });
   $('startTask').addEventListener('click', async () => {
     const button = $('startTask');
     const label = button.querySelector('span');

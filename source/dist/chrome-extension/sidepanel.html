@@ -291,6 +291,15 @@
           <p class="mode-policy" id="modePolicyText">AI 只负责筛选和生成求职招呼语，发送前由你最终确认。</p>
         </article>
 
+        <article class="module-card ai-mode-card">
+          <div class="module-title"><div><b>AI 质量模式</b><small>控制 AI 调用质量与成本</small></div><span class="pill" id="aiModePill">平衡模式</span></div>
+          <div class="mode-selector ai-mode-selector" role="group" aria-label="AI 质量模式">
+            <button class="mode-option" type="button" data-ai-mode="economy"><span>节省模式</span><small>更短 Prompt，更低 Token，适合大量初筛</small></button>
+            <button class="mode-option is-active" type="button" data-ai-mode="balanced"><span>平衡模式</span><small>默认推荐，兼顾质量与成本</small></button>
+            <button class="mode-option" type="button" data-ai-mode="precise"><span>精准模式</span><small>高 Token，详细分析，适合简历分析和最终决策</small></button>
+          </div>
+        </article>
+
         <details class="module-card collapsible" data-collapsible="search-settings" open>
           <summary>
             <span><b>搜索条件</b><small>生成 BOSS 岗位搜索任务</small></span>
@@ -335,6 +344,26 @@
             <label class="field"><span>API Key</span><input id="apiKey" type="password" autocomplete="off" placeholder="保存后显示 ***"></label>
             <label class="field"><span>自定义招呼语要求</span><textarea id="customInstruction" rows="4" maxlength="1600" placeholder="例如：语气简洁自然，优先强调 React 项目经验"></textarea><small>仅补充招呼语风格；不能覆盖事实、安全规则或 JSON 输出格式。</small></label>
             <div class="button-row"><button class="button button-secondary" id="testAi">测试 AI 连接</button><span class="inline-result" id="aiTestResult"></span></div>
+          </div>
+        </details>
+
+        <details class="module-card collapsible" data-collapsible="ai-stats">
+          <summary>
+            <span><b>AI 使用统计</b><small id="aiStatsSummary">累计调用 0 次，消耗 0 Token</small></span>
+            <i class="chevron"></i>
+          </summary>
+          <div class="module-body ai-stats-body">
+            <div class="stats-grid ai-stats-grid" id="aiStatsGrid">
+              <article><span>总调用</span><strong id="aiStatCalls">0</strong><small>次</small></article>
+              <article><span>输入 Token</span><strong id="aiStatInput">0</strong><small></small></article>
+              <article><span>输出 Token</span><strong id="aiStatOutput">0</strong><small></small></article>
+              <article><span>失败次数</span><strong id="aiStatFailed">0</strong><small></small></article>
+            </div>
+            <div class="ai-stats-detail" id="aiStatsDetail"></div>
+            <div class="button-row">
+              <button class="button button-ghost small" id="refreshAiStats">刷新统计</button>
+              <button class="button button-ghost danger small" id="clearAiStats">清除统计</button>
+            </div>
           </div>
         </details>
 

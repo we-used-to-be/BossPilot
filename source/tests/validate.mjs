@@ -31,7 +31,7 @@ if (JSON.stringify(navPages) !== JSON.stringify(expected)) throw new Error(`导�
 if (JSON.stringify(panels) !== JSON.stringify(expected)) throw new Error(`内容页面不正确：${JSON.stringify(panels)}`);
 if (!html.includes('id="readinessPill">0 / 4')) throw new Error('单条验收启动检查未加入');
 const collapsibleCount = (html.match(/data-collapsible=/g) || []).length;
-if (collapsibleCount !== 7) throw new Error(`明确折叠模块数量异常：${collapsibleCount}`);
+if (collapsibleCount !== 8) throw new Error(`明确折叠模块数量异常：${collapsibleCount}`);
 for (const id of ['setupValidationRow', 'setupValidationIcon', 'setupValidationStatus', 'resumeImportNotice', 'resumeRetryAction', 'resumePasteAction', 'expandResumeEditor', 'profileSummaryInput', 'profileGenerationPill', 'profileGenerationNote', 'saveProfile', 'activeTaskProgress', 'searchTaskList', 'deliveryTaskList', 'retryAllFailedTasks']) {
   if (!html.includes(`id="${id}"`)) throw new Error(`必要 UI 元素缺失：${id}`);
 }

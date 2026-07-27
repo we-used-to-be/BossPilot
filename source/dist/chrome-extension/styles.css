@@ -689,6 +689,22 @@ details[open] .chevron { margin-top: 3px; transform: rotate(225deg); }
 .mode-policy { margin: 10px 1px 0; color: var(--ink-subtle); font-size: 10px; line-height: 1.5; }
 .execution-mode-card .module-title { margin-bottom: 10px; }
 
+/* AI mode (3-column) */
+.ai-mode-selector { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ai-mode-card { margin-top: 12px; }
+
+/* AI stats */
+.ai-stats-body { padding: 16px !important; }
+.ai-stats-grid { margin-bottom: 12px; }
+.ai-stats-detail { margin-bottom: 10px; }
+.ai-stats-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 0; border-bottom: 1px solid var(--hairline);
+  font-size: 11px; color: var(--ink-muted);
+}
+.ai-stats-row:last-child { border-bottom: none; }
+.ai-stats-row span:last-child { font-weight: 500; color: var(--ink); }
+
 /* ── Progress ── */
 .active-progress-card {
   margin-top: 12px;
@@ -853,6 +869,7 @@ details[open] .chevron { margin-top: 3px; transform: rotate(225deg); }
 .resume-editor-card { overflow: visible; padding: 16px; }
 .resume-editor-card .sticky-actions { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.15fr); gap: 10px; margin-top: 0; padding-top: 14px; padding-bottom: 1px; }
 .resume-editor-card .sticky-actions .button { width: 100%; min-height: 40px; padding: 0 10px; font-size: 12px; }
+/* UI28 — profile source clarity and content-aware editors */
 .profile-editor-card textarea[data-autogrow] { box-sizing: border-box; width: 100%; overflow-y: hidden; resize: vertical; transition: height .14s ease, border-color .14s ease; }
 .profile-editor-card .profile-directions-input { min-height: 62px; padding: 11px 12px; line-height: 1.65; }
 
