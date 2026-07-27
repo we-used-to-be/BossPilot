@@ -1645,7 +1645,7 @@ class BossAdapter {
       type: 'external_application',
       label,
       href,
-      reason: '该岗位需要跳转网申，JobClaw 无法在 BOSS 聊天中自动投递'
+      reason: '该岗位需要跳转网申，BossPilot 无法在 BOSS 聊天中自动投递'
     };
   }
 
@@ -2119,7 +2119,7 @@ class BossAdapter {
     const [meta, encoded] = dataUrl.split(',');
     const mime = meta.match(/data:([^;]+)/)?.[1] || 'image/png';
     const bytes = Uint8Array.from(atob(encoded), char => char.charCodeAt(0));
-    const file = new File([bytes], 'JobClaw-resume.png', { type: mime });
+    const file = new File([bytes], 'BossPilot-resume.png', { type: mime });
     const transfer = new DataTransfer();
     transfer.items.add(file);
     input.files = transfer.files;

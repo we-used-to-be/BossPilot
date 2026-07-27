@@ -1,30 +1,52 @@
 <div align="center">
 
-# JobClaw by Chris
+# BossPilot
 
-**面向求职者的 AI 求职工作台**
+**AI 驱动的 BOSS 求职助手，提供智能岗位匹配、AI 沟通优化和求职流程自动化。**
 
 从简历解析、职业画像、岗位方向选择，到岗位采集、AI 匹配排序、人工确认或自动沟通，集中在一个 Chrome 侧边栏里完成。
 
-[快速开始](#快速开始) · [功能介绍](#核心功能) · [完整教程](docs/新手安装与使用.md) · [常见问题](docs/常见问题.md) · [隐私与安全](docs/隐私与安全.md)
+[快速开始](#快速开始) · [功能介绍](#核心功能) · [AI 工作流程](#ai-工作流程) · [完整教程](docs/新手安装与使用.md) · [常见问题](docs/常见问题.md) · [隐私与安全](docs/隐私与安全.md)
 
 ![Version](https://img.shields.io/badge/version-v1.3.0-078A83)
 ![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4)
 ![Storage](https://img.shields.io/badge/data-local--first-2AA66A)
 ![Language](https://img.shields.io/badge/language-简体中文-F06284)
 ![License](https://img.shields.io/badge/license-Apache--2.0-2AA66A)
+[![Fork](https://img.shields.io/badge/fork-JobClaw-by%20Chris-blue)](https://github.com/Chrisbetheking/job-claw)
 
 </div>
 
-> JobClaw 是求职者侧的效率工具，不属于 BOSS 直聘官方产品。请使用真实简历信息，遵守平台规则，不要用于骚扰、绕过验证或高频滥用。
+> BossPilot 是求职者侧的效率工具，不属于 BOSS 直聘官方产品。请使用真实简历信息，遵守平台规则，不要用于骚扰、绕过验证或高频滥用。
 
-![JobClaw 使用流程](docs/images/00-quick-start.png)
+![BossPilot 使用流程](docs/images/00-quick-start.png)
 
-## JobClaw 是什么
+---
+
+## 本项目基于 JobClaw 二次开发
+
+> **原项目**：[JobClaw by Chris](https://github.com/Chrisbetheking/job-claw)
+>
+> **感谢原作者** Chris 提供的基础架构和核心功能实现。
+>
+> 本项目在 Apache-2.0 许可协议下进行二次开发，不暗示与原项目官方关联。
+
+### 主要改进
+
+| 方向 | 说明 |
+| --- | --- |
+| AI 工作流重构 | 优化 AI 调用链路，减少冗余请求，提升投递流程稳定性 |
+| Token 消耗优化 | 精简 Prompt 结构，压缩上下文，降低 AI 调用成本 |
+| 自定义 AI Prompt | 支持更灵活的自定义提示词配置，适配不同求职场景 |
+| UI/UX 重设计 | 采用浅色极简风格，优化交互布局，提升使用体验 |
+
+---
+
+## BossPilot 是什么
 
 找工作时，用户通常需要反复完成这些动作：修改搜索词、查看岗位、判断匹配度、组织招呼语、记录投递状态、处理失败任务。
 
-JobClaw 把这些环节整理成一条清晰流程：
+BossPilot 把这些环节整理成一条清晰流程：
 
 ```text
 导入简历
@@ -51,7 +73,47 @@ JobClaw 把这些环节整理成一条清晰流程：
 | 两种模式 | 支持人工确认，也支持达到阈值后的全自动沟通 |
 | 任务进度 | 每个搜索任务和每个岗位都有独立进度、阶段和结果 |
 | 失败恢复 | 失败任务可打开原岗位、单条重试、批量重试或忽略 |
-| OpenClaw | 可选本地桥接，用于 OCR、日报、本地文件和任务恢复 |
+| 本地桥接 | 可选本地桥接，用于 OCR、日报、本地文件和任务恢复 |
+
+## AI 工作流程
+
+BossPilot 的 AI 工作流分为 6 个核心阶段，每个阶段都经过 Token 优化和结果校验：
+
+```text
+阶段 1：简历解析与画像生成
+  输入：简历原文 + 求职条件
+  AI 角色：职业顾问
+  输出：结构化职业画像（摘要 / 方向 / 技能 / 硬约束）
+  优化：分块处理长简历，避免超长上下文
+
+阶段 2：投递方向规划
+  输入：职业画像 + 用户偏好
+  AI 角色：求职策略师
+  输出：岗位方向清单 + 搜索关键词 + 优先级
+  优化：强制可编辑，用户勾选后才生效
+
+阶段 3：岗位采集与初筛
+  输入：搜索关键词 + 采集参数
+  执行：BOSS 页面采集 → DOM 解析 → 结构化提取
+  优化：分页 + 去重 + 数量上限保护
+
+阶段 4：AI 岗位匹配评分
+  输入：岗位详情 + 职业画像
+  AI 角色：招聘匹配分析师
+  输出：匹配分 + 匹配理由 + 技能命中 + 能力缺口 + 风险
+  优化：批量压缩提示词，核心字段优先使用规则匹配
+
+阶段 5：招呼语生成与优化
+  输入：岗位详情 + 职业画像 + 匹配理由
+  AI 角色：应聘者（求职口吻）
+  输出：个性化招呼语（真实事实，不虚构经历）
+  优化：控制字数，优先体现技能与岗位匹配点
+
+阶段 6：投递执行与结果验证
+  执行：页面操作 → 会话建立 → 发送招呼 → 发送附件
+  验证：聊天区气泡出现 = 成功；其他均为待确认/失败
+  容错：失败分类 → 自动重试/人工介入/任务暂停
+```
 
 ## 快速开始
 
@@ -66,16 +128,16 @@ JobClaw 把这些环节整理成一条清晰流程：
 ![安装 Chrome 扩展](docs/images/01-install-extension.png)
 
 1. 在 Chrome 地址栏打开 `chrome://extensions`
-2. 打开右上角“开发者模式”
-3. 点击“加载已解压的扩展程序”
+2. 打开右上角"开发者模式"
+3. 点击"加载已解压的扩展程序"
 4. 选择解压目录中的 **`chrome-extension` 文件夹**
-5. 登录 BOSS 直聘网页并打开 JobClaw 侧边栏
+5. 登录 BOSS 直聘网页并打开 BossPilot 侧边栏
 
 ### 3. 完成首次配置
 
 按下面顺序完成：
 
-1. 在“设置”中填写求职条件和 AI API Key
+1. 在"设置"中填写求职条件和 AI API Key
 2. 测试 AI 连接并保存
 3. 导入简历原文
 4. 生成并检查职业画像
@@ -84,7 +146,7 @@ JobClaw 把这些环节整理成一条清晰流程：
 
 ### 4. 首次全自动会强制单条验收
 
-v1.3.0 默认启用“首次单条验收”：第一次全自动成功投递 1 个岗位后会自动暂停。请确认：
+v1.3.0 默认启用"首次单条验收"：第一次全自动成功投递 1 个岗位后会自动暂停。请确认：
 
 - 进入的是正确 HR 会话
 - 求职文字真实出现在右侧聊天气泡
@@ -94,19 +156,19 @@ v1.3.0 默认启用“首次单条验收”：第一次全自动成功投递 1 �
 
 任何一步未确认，都应查看失败原因，不要连续重复点击重试。确认首条投递无误后，再次开始任务即可进入批量流程。详细规则见 [首次单条投递验收](docs/首次单条验收.md)。
 
-## 使用流程
+## 使用方式
 
 ### 配置搜索条件与 AI
 
 ![配置搜索条件与 AI](docs/images/02-configure-ai.png)
 
-在“设置”页选择人工确认或全自动模式，填写城市、求职类型、经验、学历、薪资条件及自己的 AI API Key。API Key 只应保存在自己的浏览器中，不要提交到仓库、Issue 或截图。
+在"设置"页选择人工确认或全自动模式，填写城市、求职类型、经验、学历、薪资条件及自己的 AI API Key。API Key 只应保存在自己的浏览器中，不要提交到仓库、Issue 或截图。
 
 ### 导入简历
 
 ![导入简历](docs/images/03-upload-resume.png)
 
-进入“简历 → 简历原文”上传文件。普通文本 PDF、DOCX、TXT 可直接解析；扫描版 PDF 或特殊字体 PDF 可改用粘贴正文，或通过 OpenClaw 使用本地 OCR。
+进入"简历 → 简历原文"上传文件。普通文本 PDF、DOCX、TXT 可直接解析；扫描版 PDF 或特殊字体 PDF 可改用粘贴正文，或通过本地桥接使用 OCR。
 
 ### 生成并编辑职业画像
 
@@ -142,20 +204,37 @@ AI 结果只是初稿。请检查个人定位、技能、项目、学历、城�
 
 消息页会展示当前岗位、执行阶段、百分比、失败原因和重试次数。历史失败任务支持打开原岗位、重新投递、批量重试和忽略。
 
-## OpenClaw 是做什么的
+## 配置说明
 
-![OpenClaw 使用说明](docs/images/08-openclaw-optional.png)
+### 支持的 AI 服务商
 
-OpenClaw 是**可选的本地执行与恢复中心**，不是普通用户开始使用 JobClaw 的必经步骤。
+| 服务商 | 配置项 `baseUrl` | 默认模型 |
+| --- | --- | --- |
+| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
+| OpenAI 兼容 | 服务商提供的 Endpoint | 按需填写 |
 
-适合以下场景：
+> 所有请求只从当前浏览器本地发出，API Key 仅保存在 `chrome.storage.local`。
 
-- 扫描 PDF 或特殊字体 PDF 的本地 OCR
-- 读取本地求职日报
-- 保存和恢复本地任务状态
-- 处理本地简历附件或诊断信息
+### 关键阈值参数
 
-普通的浏览器岗位搜索、AI 分析和人工确认不强制安装 OpenClaw。
+| 参数 | 位置 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `minScore` | 设置 → 任务阈值 | 70 | 达到此分数才进入自动沟通或人工确认待办 |
+| `dailyTarget` | 设置 → 任务控制 | 30 | 每天最大投递目标（软上限） |
+| `betweenJobsSeconds` | 设置 → 任务控制 | 30 | 两次投递之间的间隔秒数 |
+| `attachmentDelaySeconds` | 设置 → 任务控制 | 5 | 发送招呼语后延迟多少秒发送附件 |
+| `sendImage` | 设置 → 附件 | on | 是否随招呼语发送简历图片 |
+| `sendOnline` | 设置 → 附件 | on | 是否发送在线简历附件 |
+| `customInstruction` | 设置 → AI 自定义 | 空 | 附加到 AI 画像和招呼语 Prompt 末尾的自定义指令 |
+
+## 截图占位
+
+| 首页与任务 | 简历与画像 | 方向与搜索 | 设置与诊断 |
+| :---: | :---: | :---: | :---: |
+| ![首页](docs/images/06-start-task.png) | ![简历](docs/images/03-upload-resume.png) | ![方向](docs/images/05-select-directions.png) | ![设置](docs/images/02-configure-ai.png) |
+| 任务启动与模式切换 | 简历导入与画像生成 | 投递方向规划与搜索 | AI 配置与参数调整 |
+| ![进度](docs/images/07-monitor-and-retry.png) | ![验收](docs/images/04-edit-profile.png) | ![桥接](docs/images/08-openclaw-optional.png) | ![安装](docs/images/01-install-extension.png) |
+| 任务进度与失败重试 | 职业画像编辑与校验 | 可选本地桥接能力 | Chrome 扩展安装向导 |
 
 ## 数据与隐私
 
@@ -168,7 +247,7 @@ OpenClaw 是**可选的本地执行与恢复中心**，不是普通用户开始�
 
 ## 安全边界
 
-JobClaw 不应实现或用于：
+BossPilot 不应实现或用于：
 
 - 绕过验证码、登录验证或平台安全限制
 - 导出、共享或远程托管登录 Cookie
@@ -186,15 +265,15 @@ JobClaw 不应实现或用于：
 
 ### 更新后仍然看到旧界面
 
-点击 JobClaw“停止”，在 `chrome://extensions` 刷新扩展，关闭旧 BOSS 标签页后重新打开。
+点击 BossPilot "停止"，在 `chrome://extensions` 刷新扩展，关闭旧 BOSS 标签页后重新打开。
 
 ### AI 连接正常，但画像生成失败
 
-“连接正常”只代表接口可访问。还需要检查模型名称、API 余额、输出是否完整以及简历正文是否过长。
+"连接正常"只代表接口可访问。还需要检查模型名称、API 余额、输出是否完整以及简历正文是否过长。
 
 ### PDF 识别为空或乱码
 
-优先使用 DOCX/TXT，或直接粘贴正文。扫描版 PDF 可安装 OpenClaw 后使用本地 OCR。
+优先使用 DOCX/TXT，或直接粘贴正文。扫描版 PDF 可安装本地桥接后使用 OCR。
 
 ### 招呼语没有真正发出
 
@@ -202,7 +281,7 @@ JobClaw 不应实现或用于：
 
 ### 外部网申岗位怎么办
 
-“立即网申”“去网申”等无法通过 BOSS 聊天完成的岗位会被跳过，不计入成功或失败。
+"立即网申""去网申"等无法通过 BOSS 聊天完成的岗位会被跳过，不计入成功或失败。
 
 更多排查方法见：[常见问题](docs/常见问题.md)。
 
@@ -212,15 +291,21 @@ JobClaw 不应实现或用于：
 <summary>展开查看目录说明</summary>
 
 ```text
-JobClaw-by-Chris-v1.3.0/
+BossPilot-v1.3.0/
 ├── chrome-extension/       可直接加载的 Chrome 扩展
 ├── source/                 扩展源代码、构建脚本和测试
-├── desktop-bridge/         OpenClaw 本地桥接
-├── skills/jobclaw/         OpenClaw Skill
+│   ├── src/                JS 源文件（sidepanel/background/content/offscreen）
+│   ├── public/             静态资源（manifest/HTML/CSS）
+│   ├── tests/              单元测试、回归测试、验证脚本
+│   ├── scripts/            发布检查脚本
+│   └── build.mjs           构建入口
+├── desktop-bridge/         可选本地桥接（OCR / 任务状态）
+├── skills/                 本地 Skill 定义
 ├── docs/                   新手教程、常见问题和安全说明
+│   └── images/             教程截图
 ├── CHANGELOG.md            版本更新记录
 ├── LICENSE / NOTICE        Apache-2.0 与署名信息
-├── ATTRIBUTION.md          引用、二创和转载署名方式
+├── ATTRIBUTION.md          原项目署名与二次开发说明
 ├── CONTRIBUTING.md         贡献指南
 └── SECURITY.md             安全报告方式
 ```
@@ -250,25 +335,26 @@ npm run build
 
 遇到问题时，建议先查看 [常见问题](docs/常见问题.md)，再提交 GitHub Issue。提交时请包含：
 
-- JobClaw 版本
+- BossPilot 版本
 - Chrome 版本和操作系统
 - 出错步骤
 - 已隐藏隐私信息的截图
 - 错误页面中的完整错误信息
 
-微信：`easymoneysniperchris`
+## 开源协议说明
 
+BossPilot 采用 [Apache License 2.0](LICENSE) 开源。本项目基于 JobClaw 二次开发，复制、修改和再分发时，请同时保留：
 
-## 开源许可、署名与通知
-
-JobClaw 采用 [Apache License 2.0](LICENSE) 开源。复制、修改和再分发时，请保留 `LICENSE` 与 `NOTICE`，明确标注：
+1. 原项目 `LICENSE` 与 `NOTICE` 文件
+2. 本项目的 `NOTICE` 中 BossPilot 二次开发声明
+3. 明确标注来源：
 
 > Based on JobClaw by Chris — https://github.com/Chrisbetheking/job-claw
-
-发布二创、教程、视频、文章、商业集成或较大改编时，也请通过 GitHub Issue 或微信 `easymoneysniperchris` 通知作者。通知用于协作、署名和案例收集，不构成 Apache-2.0 之外的附加许可条件。
+>
+> BossPilot — https://github.com/we-used-to-be/BossPilot
 
 详细署名格式见 [ATTRIBUTION.md](ATTRIBUTION.md)，品牌使用规则见 [TRADEMARKS.md](TRADEMARKS.md)。
 
 ## 免责声明
 
-JobClaw 与 BOSS 直聘及其运营主体不存在隶属、合作或授权关系。“BOSS 直聘”是相关权利人的商标。本项目仅提供用户侧的求职信息整理和操作辅助能力，使用者应自行确认信息准确性，并遵守平台规则和适用法律。
+BossPilot 与 BOSS 直聘及其运营主体不存在隶属、合作或授权关系。"BOSS 直聘"是相关权利人的商标。BossPilot 与 JobClaw 原项目官方无关联，本项目仅提供用户侧的求职信息整理和操作辅助能力，使用者应自行确认信息准确性，并遵守平台规则和适用法律。

@@ -10,8 +10,8 @@ const [html, sidepanel, background, content, common, manifest] = await Promise.a
   readFile(`${root}/manifest.json`, 'utf8').then(JSON.parse)
 ]);
 
-if (!html.includes('JobClaw <em>by Chris</em>')) throw new Error('顶部缺少 JobClaw by Chris 品牌');
-if (manifest.name !== 'JobClaw by Chris 求职助手') throw new Error('Manifest 品牌名错误');
+if (!html.includes('<strong>BossPilot</strong>')) throw new Error('顶部缺少 BossPilot 品牌');
+if (manifest.name !== 'BossPilot · AI 驱动的 BOSS 求职助手') throw new Error('Manifest 品牌名错误');
 for (const mode of ['data-execution-mode="review"', 'data-execution-mode="auto"']) {
   if ((html.match(new RegExp(mode, 'g')) || []).length !== 2) throw new Error(`执行模式入口数量错误：${mode}`);
 }
@@ -32,7 +32,7 @@ if (!background.includes('updatedStats.sent >= Number(config.dailyTarget || 150)
 
 console.log(JSON.stringify({
   ok: true,
-  brand: 'JOBCLAW_BY_CHRIS_OK',
+  brand: 'BOSSPILOT_OK',
   role: 'APPLICANT_ONLY_OK',
   modes: ['MANUAL_REVIEW', 'FULL_AUTO'],
   manual: ['EDIT_GREETING', 'SINGLE_CONFIRM', 'BATCH_CONFIRM', 'BATCH_REJECT'],

@@ -10,7 +10,7 @@ const analyzeEnd = background.indexOf('function createTasks(', analyzeStart);
 if (analyzeStart < 0 || analyzeEnd < 0) throw new Error('岗位匹配函数缺失');
 const analyzeBody = background.slice(analyzeStart, analyzeEnd);
 
-for (const token of ['buildJobMatchProfile', 'profileFacts', 'matchedSkills', '"score":0', '"decision":"recommend|cautious|reject"']) {
+for (const token of ['buildJobMatchProfile', 'profileFacts', 'matchedSkills', '"score":0', '"decision":"recommend|cautious|reject"', 'maxTokens: 900']) {
   if (!analyzeBody.includes(token)) throw new Error(`岗位匹配精简输入/输出缺失：${token}`);
 }
 for (const forbidden of ['resumeText', '"greeting"', 'normalizeApplicantGreeting']) {

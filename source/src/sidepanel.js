@@ -929,8 +929,8 @@ function renderExecutionMode() {
   setText('messageSubtitle', auto ? '达标岗位自动联系招聘方，异常岗位仍会保留给你处理' : 'AI 推荐后由你决定是否以应聘者身份沟通');
   setText('messageNoticeTitle', auto ? '当前为全自动投递' : '人工确认后再投递');
   setText('messageNoticeText', auto
-    ? 'JobClaw 会以求职者口吻联系招聘方，只使用简历真实事实；遇到验证或页面异常会立即暂停。'
-    : '你可以修改求职招呼语，确认后 JobClaw 才会以应聘者身份联系招聘方。');
+    ? 'BossPilot 会以求职者口吻联系招聘方，只使用简历真实事实；遇到验证或页面异常会立即暂停。'
+    : '你可以修改求职招呼语，确认后 BossPilot 才会以应聘者身份联系招聘方。');
   setText('pendingSectionTitle', auto ? '需要你处理的岗位' : '待确认岗位');
   setText('pendingSectionSubtitle', auto ? '仅展示自动流程中需要人工处理的项目' : '按 AI 匹配分从高到低排列');
   setText('attachmentPolicyText', auto
@@ -1286,10 +1286,10 @@ function bindNavigation() {
     for (const panel of panels) panel.classList.toggle('is-active', panel.dataset.pagePanel === validPage);
     setText('pageContext', pageLabels[validPage]);
     if (resetScroll && pageStack) pageStack.scrollTop = 0;
-    localStorage.setItem('jobclaw.activePage', validPage);
+    localStorage.setItem('bosspilot.activePage', validPage);
   };
   for (const button of buttons) button.addEventListener('click', () => activateMainPage(button.dataset.page));
-  activateMainPage(localStorage.getItem('jobclaw.activePage') || 'home', false);
+  activateMainPage(localStorage.getItem('bosspilot.activePage') || 'home', false);
 
   for (const jump of document.querySelectorAll('[data-jump-page]')) {
     jump.addEventListener('click', () => {
@@ -1311,7 +1311,7 @@ function bindResumeTabs() {
     }
     for (const panel of panels) panel.classList.toggle('is-active', panel.dataset.resumePanel === validView);
     if (resetScroll && $('pageStack')) $('pageStack').scrollTop = 0;
-    localStorage.setItem('jobclaw.resumeView', validView);
+    localStorage.setItem('bosspilot.resumeView', validView);
   };
   for (const button of buttons) button.addEventListener('click', async () => {
     activateResumeView(button.dataset.resumeTab);
@@ -1320,12 +1320,12 @@ function bindResumeTabs() {
       renderForms(false);
     }
   });
-  activateResumeView(localStorage.getItem('jobclaw.resumeView') || 'source', false);
+  activateResumeView(localStorage.getItem('bosspilot.resumeView') || 'source', false);
 }
 
 function bindExplicitCollapsibles() {
   for (const detail of document.querySelectorAll('details[data-collapsible]')) {
-    const key = `jobclaw.collapse.${detail.dataset.collapsible}`;
+    const key = `bosspilot.collapse.${detail.dataset.collapsible}`;
     const saved = localStorage.getItem(key);
     if (saved !== null) detail.open = saved === 'open';
     detail.addEventListener('toggle', () => localStorage.setItem(key, detail.open ? 'open' : 'closed'));
@@ -1764,7 +1764,7 @@ function bindActions() {
     const blob = new Blob([JSON.stringify(diagnostic, null, 2)], { type: 'application/json' });
     const anchor = document.createElement('a');
     anchor.href = URL.createObjectURL(blob);
-    anchor.download = `jobclaw-diagnostic-${Date.now()}.json`;
+    anchor.download = `bosspilot-diagnostic-${Date.now()}.json`;
     anchor.click();
     URL.revokeObjectURL(anchor.href);
   });

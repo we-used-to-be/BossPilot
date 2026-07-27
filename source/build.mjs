@@ -17,7 +17,7 @@ const manifest = JSON.parse(await readFile(`${out}/manifest.json`, 'utf8'));
 await writeFile('dist/build-info.json', JSON.stringify({
   version: manifest.version,
   versionName: manifest.version_name,
-  baseline: 'JobClaw v1.2.37',
+  baseline: 'BossPilot v1.2.37 (based on JobClaw)',
   builtAt: new Date().toISOString(),
   runtimeModules: ['lib/conversation-identity.js', 'lib/task-state.js', 'lib/job-priority.js']
 }, null, 2));

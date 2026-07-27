@@ -956,7 +956,7 @@ async function init() {
   }
   await refreshBossTabsForRuntimeVersion();
   await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
-  chrome.alarms.create('jobclaw-tick', { periodInMinutes: 1 });
+  chrome.alarms.create('bosspilot-tick', { periodInMinutes: 1 });
 }
 
 function publicState(all) {
@@ -1285,10 +1285,10 @@ async function activeBossTab() {
 function bossConnectionError(error) {
   const message = String(error?.message || error || '');
   if (NO_RECEIVER_PATTERN.test(message)) {
-    return 'BOSS 页面连接尚未就绪，JobClaw 已尝试自动修复。请刷新当前 BOSS 页面后再点一次开始。';
+    return 'BOSS 页面连接尚未就绪，BossPilot 已尝试自动修复。请刷新当前 BOSS 页面后再点一次开始。';
   }
   if (/Cannot access contents of url|The extensions gallery cannot be scripted|Missing host permission/i.test(message)) {
-    return '当前页面无法接入 JobClaw。请确认打开的是 BOSS 直聘岗位页或沟通页。';
+    return '当前页面无法接入 BossPilot。请确认打开的是 BOSS 直聘岗位页或沟通页。';
   }
   return message || 'BOSS 页面连接失败';
 }
@@ -1298,7 +1298,7 @@ async function probeBossReceiver(tab) {
 }
 
 async function injectBossContent(tab) {
-  if (!chrome.scripting?.executeScript) throw new Error('扩展缺少页面注入能力，请重新加载最新版 JobClaw');
+  if (!chrome.scripting?.executeScript) throw new Error('扩展缺少页面注入能力，请重新加载最新版 BossPilot');
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     files: [CONTENT_SCRIPT_FILE]
@@ -1344,7 +1344,7 @@ async function ensureBossReceiver(tab) {
       }
     }
   }
-  throw new Error(`BOSS 页面助手版本未就绪（需要 ${EXPECTED_CONTENT_VERSION}）。JobClaw 已自动刷新页面，请再点一次开始。`);
+  throw new Error(`BOSS 页面助手版本未就绪（需要 ${EXPECTED_CONTENT_VERSION}）。BossPilot 已自动刷新页面，请再点一次开始。`);
 }
 
 async function sendToBossTab(tab, message) {
@@ -1841,7 +1841,7 @@ function normalizeFactList(value, limit = 8, maxLength = 180) {
 
 function normalizeProfileFacts(facts = {}) {
   return {
-    skills: normalizeStringList(facts.skills, 30),
+    skills: normalizeStringList(facts.skills, 30).map(item => item.slice(0, 80)),
     projects: normalizeFactList(facts.projects, 6),
     experiences: normalizeFactList(facts.experiences, 6),
     education: normalizeFactList(facts.education, 4),
@@ -2247,7 +2247,7 @@ function normalizeApplicantGreeting(result, job, profile) {
 
 function buildJobMatchProfile(profile = {}, profileFacts = {}) {
   return {
-    summary: String(profile.summary || '').slice(0, 500),
+    summary: String(profile.summary || '').slice(0, 480),
     primaryDirections: normalizeStringList(
       profile.primaryDirections?.map(item => typeof item === 'string' ? item : item?.name),
       3
@@ -2330,7 +2330,7 @@ async function analyzeJob(job) {
   const result = await callModel([
     {
       role: 'system',
-      content: '你是为求职者服务的岗位匹配审查器。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。先判断学历、经验、地点等硬条件，再判断方向与技能；存在硬性不匹配时 decision 必须为 reject，并写入 risks。只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":""}。'
+      content: '你是为求职者服务的岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。先判断学历、经验、地点等硬条件，再判断方向与技能；存在硬性不匹配时 decision 必须为 reject，并写入 risks。只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":""}。'
     },
     {
       role: 'user',
@@ -2344,7 +2344,7 @@ async function analyzeJob(job) {
     matchedSkills: normalizeStringList(result.matchedSkills, 12),
     gaps: normalizeStringList(result.gaps, 10),
     risks: normalizeStringList(result.risks, 10),
-    reason: String(result.reason || '').trim().slice(0, 500)
+    reason: String(result.reason || '').trim().slice(0, 480)
   };
   if (normalized.score < Number(config?.minScore || 75) && normalized.decision === 'recommend') {
     normalized.decision = 'cautious';
@@ -2637,7 +2637,7 @@ chrome.runtime.onStartup.addListener(init);
 init();
 
 chrome.alarms.onAlarm.addListener(async alarm => {
-  if (alarm.name !== 'jobclaw-tick') return;
+  if (alarm.name !== 'bosspilot-tick') return;
   const { workflow } = await storage.get('workflow');
   if (workflow?.running && !workflow.paused) sendToBoss({ type: 'RUN' }).catch(() => {});
 });

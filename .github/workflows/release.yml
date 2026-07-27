@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
-          NAME="JobClaw-by-Chris-v${VERSION}"
+          NAME="BossPilot-v${VERSION}"
           STAGE="release/${NAME}"
           mkdir -p "$STAGE"
           cp -R source/dist/chrome-extension "$STAGE/chrome-extension"
@@ -47,9 +47,9 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          NAME="JobClaw-by-Chris-v${VERSION}"
+          NAME="BossPilot-v${VERSION}"
           gh release create "$GITHUB_REF_NAME" \
             "release/${NAME}.zip" \
             "release/${NAME}.zip.sha256" \
-            --title "JobClaw by Chris v${VERSION}" \
+            --title "BossPilot v${VERSION}" \
             --generate-notes

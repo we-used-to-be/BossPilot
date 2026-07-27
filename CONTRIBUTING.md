@@ -1,6 +1,6 @@
-# Contributing to JobClaw
+# Contributing to BossPilot
 
-感谢参与 JobClaw by Chris。
+感谢参与 BossPilot 项目。本项目基于 JobClaw by Chris (https://github.com/Chrisbetheking/job-claw) 二次开发。
 
 ## 开始前
 

@@ -1,3 +1,15 @@
+BossPilot
+Copyright 2026 BossPilot Contributors
+
+This product includes software developed for the BossPilot project:
+https://github.com/we-used-to-be/BossPilot
+
+---
+
+BossPilot is based on JobClaw by Chris. The following notice is retained per
+the terms of the Apache License 2.0 under which JobClaw was originally
+distributed:
+
 JobClaw by Chris
 Copyright 2026 Chris (GitHub: Chrisbetheking)
 
@@ -5,7 +17,7 @@ This product includes software developed for the JobClaw by Chris project:
 https://github.com/Chrisbetheking/job-claw
 
 When redistributing JobClaw or a modified version, retain this NOTICE file,
-retain the project attribution “JobClaw by Chris”, and clearly state any
+retain the project attribution "JobClaw by Chris", and clearly state any
 material modifications you made.
 
 Community request: when publishing an article, video, derivative project,

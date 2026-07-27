@@ -15,7 +15,7 @@ finish() {
 trap finish EXIT
 
 echo "========================================"
-echo " JobClaw 桌面桥接安装 / 修复"
+echo " BossPilot 桌面桥接安装 / 修复 (基于 OpenClaw)"
 echo "========================================"
 
 NODE=""
