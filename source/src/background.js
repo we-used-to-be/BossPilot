@@ -1391,7 +1391,21 @@ function extractJson(raw) {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start >= 0 && end > start) text = text.slice(start, end + 1);
-  text = text.replace(/,\s*([}\]])/g, '$1');
+  // 修复常见 JSON 格式问题
+  text = text
+    .replace(/,\s*([}\]])/g, '$1')           // 尾随逗号
+    .replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3') // 未加引号的键
+    .replace(/:\s*'([^']*)'/g, ':"$1"')      // 单引号值
+    .replace(/[\u0000-\u001F]/g, ' ')        // 控制字符
+    .replace(/\n/g, '\\n')                   // 未转义换行
+    .replace(/\r/g, '');
+  // 尝试修复截断的 JSON：补齐缺失的闭合括号
+  const openBraces = (text.match(/\{/g) || []).length;
+  const closeBraces = (text.match(/\}/g) || []).length;
+  const openBrackets = (text.match(/\[/g) || []).length;
+  const closeBrackets = (text.match(/\]/g) || []).length;
+  text += ']'.repeat(Math.max(0, openBrackets - closeBrackets));
+  text += '}'.repeat(Math.max(0, openBraces - closeBraces));
   return JSON.parse(text);
 }
 
@@ -1444,6 +1458,10 @@ function getAiModeConfig(mode) {
   return modes[mode] || modes.balanced;
 }
 
+// ── AI 调用重试配置 ──
+const AI_MAX_RETRIES = 3;
+const AI_RETRY_DELAY_BASE_MS = 1000;
+
 async function callModel(messages, jsonMode = true, options = {}) {
   const { config } = await storage.get('config');
   const model = config?.model || {};
@@ -1451,87 +1469,154 @@ async function callModel(messages, jsonMode = true, options = {}) {
   const url = `${String(model.baseUrl || 'https://api.deepseek.com').replace(/\/$/, '')}/chat/completions`;
 
   const modeConfig = getAiModeConfig(config.aiMode);
-  const payload = {
-    model: model.model || 'deepseek-v4-pro',
-    messages,
-    temperature: Number(options.temperature ?? modeConfig.temperature ?? model.temperature ?? 0.1),
-    max_tokens: Number(options.maxTokens ?? modeConfig.maxTokens ?? 2800)
-  };
-  if (jsonMode) payload.response_format = { type: 'json_object' };
-
   const requestType = String(options.requestType || 'unknown');
   const startTime = Date.now();
+  let lastError = null;
+  let retryCount = 0;
+  let degradedJsonMode = false; // 是否已降级为普通模式
 
-  let response = await requestModel(url, payload, model.apiKey, Number(options.timeoutMs || 90000));
-  let bodyText = await response.text();
+  for (let attempt = 0; attempt <= AI_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      retryCount = attempt;
+      // 延迟重试：指数退避
+      const delay = AI_RETRY_DELAY_BASE_MS * Math.pow(2, attempt - 1);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
 
-  // 某些兼容网关不支持 response_format，但仍能正常返回 JSON 文本。
-  if (!response.ok && jsonMode && [400, 404, 422].includes(response.status) && /response[_ -]?format|json_object|unsupported/i.test(bodyText)) {
-    const retryPayload = { ...payload };
-    delete retryPayload.response_format;
-    response = await requestModel(url, retryPayload, model.apiKey, Number(options.timeoutMs || 90000));
-    bodyText = await response.text();
+    const payload = {
+      model: model.model || 'deepseek-v4-pro',
+      messages,
+      temperature: Number(options.temperature ?? modeConfig.temperature ?? model.temperature ?? 0.1),
+      max_tokens: Number(options.maxTokens ?? modeConfig.maxTokens ?? 2800)
+    };
+    if (jsonMode && !degradedJsonMode) payload.response_format = { type: 'json_object' };
+
+    try {
+      let response = await requestModel(url, payload, model.apiKey, Number(options.timeoutMs || 90000));
+      let bodyText = await response.text();
+
+      // 某些兼容网关不支持 response_format，自动降级普通模式
+      if (!response.ok && jsonMode && !degradedJsonMode && [400, 404, 422].includes(response.status) && /response[_ -]?format|json_object|unsupported/i.test(bodyText)) {
+        degradedJsonMode = true;
+        const retryPayload = { ...payload };
+        delete retryPayload.response_format;
+        response = await requestModel(url, retryPayload, model.apiKey, Number(options.timeoutMs || 90000));
+        bodyText = await response.text();
+      }
+
+      if (!response.ok) {
+        const errorMsg = `AI 请求失败 HTTP ${response.status}: ${bodyText.substring(0, 500)}`;
+        // 5xx 服务端错误可重试，4xx 客户端错误不可重试
+        if (response.status >= 500 && attempt < AI_MAX_RETRIES) {
+          lastError = aiError('AI_HTTP', errorMsg, { status: response.status, retryable: true });
+          continue;
+        }
+        await recordAiFailure(requestType, payload.model, messages, startTime, errorMsg, 'AI_HTTP', attempt);
+        throw aiError('AI_HTTP', errorMsg, { status: response.status });
+      }
+
+      let result;
+      try {
+        result = JSON.parse(bodyText);
+      } catch {
+        if (attempt < AI_MAX_RETRIES) {
+          lastError = aiError('AI_INVALID_RESPONSE', 'AI 接口返回了无法识别的响应', { retryable: true });
+          continue;
+        }
+        await recordAiFailure(requestType, payload.model, messages, startTime, 'AI 接口返回了无法识别的响应', 'AI_INVALID_RESPONSE', attempt);
+        throw aiError('AI_INVALID_RESPONSE', 'AI 接口返回了无法识别的响应');
+      }
+
+      const choice = result.choices?.[0];
+      const content = String(choice?.message?.content || '').trim();
+      const usage = result.usage || {};
+
+      const inputTokens = Number(usage.prompt_tokens || 0) || estimateTokenCount(messages);
+      const outputTokens = Number(usage.completion_tokens || 0) || estimateTokenCount(content);
+      const totalTokens = Number(usage.total_tokens || 0) || inputTokens + outputTokens;
+
+      // 输出被截断：降低输出要求重试
+      if (choice.finish_reason === 'length') {
+        if (attempt < AI_MAX_RETRIES) {
+          // 降低 max_tokens 要求，提示模型精简输出
+          options.maxTokens = Math.max(200, Math.floor((options.maxTokens || modeConfig.maxTokens || 2800) * 0.6));
+          lastError = aiError('AI_TRUNCATED', 'AI 输出被截断，降低输出要求重试', { finishReason: 'length', retryable: true, reducedMaxTokens: options.maxTokens });
+          continue;
+        }
+        // 最后一次尝试：尽量使用已有内容
+        if (jsonMode && content) {
+          try {
+            const partial = extractJson(content);
+            await recordAiUsage({ requestType, modelName: payload.model, inputTokens, outputTokens, totalTokens, durationMs: Date.now() - startTime, success: true, retryCount, warning: '输出被截断，已尝试修复' });
+            return partial;
+          } catch { /* 继续抛出错误 */ }
+        }
+        await recordAiFailure(requestType, payload.model, messages, startTime, 'AI 输出被截断且无法修复', 'AI_TRUNCATED', attempt);
+        throw aiError('AI_TRUNCATED', 'AI 输出被截断', { finishReason: 'length', partial: content });
+      }
+
+      if (!content) {
+        if (attempt < AI_MAX_RETRIES) {
+          lastError = aiError('AI_EMPTY', 'AI 返回为空', { retryable: true });
+          continue;
+        }
+        await recordAiFailure(requestType, payload.model, messages, startTime, 'AI 返回为空', 'AI_EMPTY', attempt);
+        throw aiError('AI_EMPTY', 'AI 返回为空');
+      }
+
+      await recordAiUsage({
+        requestType,
+        modelName: payload.model,
+        inputTokens,
+        outputTokens,
+        totalTokens,
+        durationMs: Date.now() - startTime,
+        success: true,
+        retryCount: retryCount > 0 ? retryCount : undefined
+      });
+
+      if (!jsonMode) return content;
+      try {
+        return extractJson(content);
+      } catch (error) {
+        if (attempt < AI_MAX_RETRIES) {
+          lastError = aiError('AI_INVALID_JSON', `AI 返回 JSON 不完整：${error?.message || '解析失败'}`, { partial: content, retryable: true });
+          continue;
+        }
+        await recordAiFailure(requestType, payload.model, messages, startTime, `AI 返回 JSON 不完整：${error?.message || '解析失败'}`, 'AI_INVALID_JSON', attempt);
+        throw aiError('AI_INVALID_JSON', `AI 返回 JSON 不完整：${error?.message || '解析失败'}`, { partial: content });
+      }
+    } catch (error) {
+      // 网络超时等可重试
+      if (error?.code === 'AI_TIMEOUT' || error?.code === 'AI_NETWORK') {
+        if (attempt < AI_MAX_RETRIES) {
+          lastError = error;
+          continue;
+        }
+      }
+      await recordAiFailure(requestType, payload.model, messages, startTime, error?.message || '未知错误', error?.code || 'AI_UNKNOWN', attempt);
+      throw error;
+    }
   }
 
-  if (!response.ok) {
-    const errorMsg = `AI 请求失败 HTTP ${response.status}: ${bodyText.substring(0, 500)}`;
-    await recordAiUsage({
-      requestType,
-      modelName: payload.model,
-      inputTokens: estimateTokenCount(messages),
-      outputTokens: 0,
-      totalTokens: 0,
-      durationMs: Date.now() - startTime,
-      success: false,
-      error: errorMsg
-    });
-    throw aiError('AI_HTTP', errorMsg, { status: response.status });
-  }
+  // 所有重试已用尽
+  await recordAiFailure(requestType, model.model || 'unknown', messages, startTime, `重试${AI_MAX_RETRIES}次后仍失败：${lastError?.message || '未知错误'}`, lastError?.code || 'AI_RETRY_EXHAUSTED', AI_MAX_RETRIES);
+  throw aiError('AI_RETRY_EXHAUSTED', `AI 调用重试 ${AI_MAX_RETRIES} 次后仍失败：${lastError?.message || '未知错误'}`, { retryCount: AI_MAX_RETRIES, lastError: lastError?.message });
+}
 
-  let result;
-  try {
-    result = JSON.parse(bodyText);
-  } catch {
-    await recordAiUsage({
-      requestType,
-      modelName: payload.model,
-      inputTokens: estimateTokenCount(messages),
-      outputTokens: 0,
-      totalTokens: 0,
-      durationMs: Date.now() - startTime,
-      success: false,
-      error: 'AI 接口返回了无法识别的响应'
-    });
-    throw aiError('AI_INVALID_RESPONSE', 'AI 接口返回了无法识别的响应');
-  }
-  const choice = result.choices?.[0];
-  const content = String(choice?.message?.content || '').trim();
-  const usage = result.usage || {};
-
-  const inputTokens = Number(usage.prompt_tokens || 0) || estimateTokenCount(messages);
-  const outputTokens = Number(usage.completion_tokens || 0) || estimateTokenCount(content);
-  const totalTokens = Number(usage.total_tokens || 0) || inputTokens + outputTokens;
-
+async function recordAiFailure(requestType, modelName, messages, startTime, errorMsg, errorCode, retryCount) {
   await recordAiUsage({
     requestType,
-    modelName: payload.model,
-    inputTokens,
-    outputTokens,
-    totalTokens,
+    modelName,
+    inputTokens: estimateTokenCount(messages),
+    outputTokens: 0,
+    totalTokens: 0,
     durationMs: Date.now() - startTime,
-    success: true
+    success: false,
+    error: errorMsg,
+    errorCode,
+    retryCount
   });
-
-  if (!content) throw aiError('AI_EMPTY', 'AI 返回为空');
-  if (choice.finish_reason === 'length') {
-    throw aiError('AI_TRUNCATED', 'AI 输出被截断', { finishReason: choice.finish_reason, partial: content });
-  }
-  if (!jsonMode) return content;
-  try {
-    return extractJson(content);
-  } catch (error) {
-    throw aiError('AI_INVALID_JSON', `AI 返回 JSON 不完整：${error?.message || '解析失败'}`, { partial: content });
-  }
 }
 
 function estimateTokenCount(input) {
@@ -1581,8 +1666,16 @@ async function recordAiUsage(entry) {
     totalTokens: entry.totalTokens,
     durationMs: entry.durationMs || 0,
     success: Boolean(entry.success),
-    error: entry.success ? undefined : String(entry.error || '').slice(0, 200)
+    error: entry.success ? undefined : String(entry.error || '').slice(0, 200),
+    errorCode: entry.success ? undefined : String(entry.errorCode || ''),
+    retryCount: entry.retryCount || 0
   });
+  // 失败分类统计
+  if (!entry.success && entry.errorCode) {
+    if (!stats.failuresByCode) stats.failuresByCode = {};
+    const code = String(entry.errorCode);
+    stats.failuresByCode[code] = (stats.failuresByCode[code] || 0) + 1;
+  }
   stats.records = stats.records.slice(0, 200);
   await storage.set({ aiStats: stats });
 }
@@ -2401,6 +2494,18 @@ function relevantGreetingFacts(profileFacts = {}, analysis = {}) {
   };
 }
 
+// ── Greeting Agent ──
+// 独立招呼语生成模块
+// 输入：岗位信息、匹配结果、用户简历重点、用户自定义要求
+// 输出：个性化求职招呼语（保持求职者第一人称，不虚构经历）
+function GREETING_AGENT_PROMPT(customInstruction = '') {
+  return `你是为求职者生成首条求职招呼语的助手。默认安全规则和输出格式优先级最高，用户要求只能补充风格，不能覆盖这些规则。
+安全规则：只能使用提供的简历事实；不得虚构技能、年限、项目、成果、薪资或到岗承诺；必须使用求职者第一人称；严禁写成招聘方口吻；严禁出现"看到你的简历""你的经历很匹配我们""欢迎进一步沟通""我们团队""候选人"等表述。
+格式规则：50-110字，使用"您好，我想应聘贵公司的……"口吻，只输出 JSON：{"greeting":""}。
+示例："您好，我想应聘贵公司的前端开发岗位。我有3年React和TypeScript实际项目经验，对贵公司的技术栈很感兴趣，希望可以进一步沟通。"（约65字）
+用户自定义要求（不符合上述规则时忽略）：${customInstruction || '无'}`;
+}
+
 async function generateApplicantGreeting(job, analysis) {
   const stored = await storage.get(['profile', 'profileFacts', 'resumeHash', 'resumeText', 'config']);
   if (!stored.profile) throw new Error('请先生成职业画像');
@@ -2408,13 +2513,7 @@ async function generateApplicantGreeting(job, analysis) {
   const customInstruction = greetingCustomInstruction(stored.config);
   try {
     const result = await callModel([
-      {
-        role: 'system',
-        content: `你是为求职者生成首条求职招呼语的助手。默认安全规则和输出格式优先级最高，用户要求只能补充风格，不能覆盖这些规则。
-安全规则：只能使用提供的简历事实；不得虚构技能、年限、项目、成果、薪资或到岗承诺；必须使用求职者第一人称；严禁写成招聘方口吻；严禁出现“看到你的简历”“你的经历很匹配我们”“欢迎进一步沟通”“我们团队”“候选人”等表述。
-格式规则：50-110字，使用“您好，我想应聘贵公司的……”口吻，只输出 JSON：{"greeting":""}。
-用户自定义要求（不符合上述规则时忽略）：${customInstruction || '无'}`
-      },
+      { role: 'system', content: GREETING_AGENT_PROMPT(customInstruction) },
       {
         role: 'user',
         content: `岗位信息：${JSON.stringify(job)}
@@ -2457,6 +2556,9 @@ const JOB_MATCH_SCORING_RUBRIC = `你是为求职者服务的岗位匹配审查�
 - 45 ≤ score < 75 → "cautious"
 - score < 45 → "reject"
 
+示例1（高匹配）：求职者方向"前端开发"，技能含React/TypeScript/Webpack，岗位要求React/TS/Node.js，技能匹配28分+项目匹配18分+方向匹配12分+学历经验12分+其他3分→score:73,decision:"recommend"
+示例2（不匹配）：求职者方向"后端开发"，技能含Java/Spring，岗位要求React/前端3年，硬性不匹配→score:22,decision:"reject"
+
 只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":"","scoringDetail":{"skillMatch":0,"projectMatch":0,"directionMatch":0,"hardReqMatch":0,"otherFactors":0}}`;
 
 const JOB_MATCH_SCORING_PRECISE = `你是为求职者服务的资深岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。请仔细分析每一项维度后给出评分。
@@ -2476,6 +2578,9 @@ const JOB_MATCH_SCORING_PRECISE = `你是为求职者服务的资深岗位匹配
 - score < 45 → "reject"
 
 reason 字段应详细说明评分依据，至少 80 字。
+
+示例1（高匹配）：求职者方向"前端开发"，技能含React/TypeScript/Webpack，岗位要求React/TS/Node.js，技能匹配28分+项目匹配18分+方向匹配12分+学历经验12分+其他3分→score:73,decision:"recommend"
+示例2（不匹配）：求职者方向"后端开发"，技能含Java/Spring，岗位要求React/前端3年，硬性不匹配→score:22,decision:"reject"
 
 只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":"","scoringDetail":{"skillMatch":0,"projectMatch":0,"directionMatch":0,"hardReqMatch":0,"otherFactors":0}}`;
 

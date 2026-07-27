@@ -705,6 +705,22 @@ details[open] .chevron { margin-top: 3px; transform: rotate(225deg); }
 .ai-stats-row:last-child { border-bottom: none; }
 .ai-stats-row span:last-child { font-weight: 500; color: var(--ink); }
 
+.ai-stats-section-title {
+  font-size: 11px; font-weight: 600; color: var(--ink-muted);
+  margin-top: 12px; margin-bottom: 4px;
+  padding-bottom: 4px; border-bottom: 1px solid var(--hairline);
+}
+
+.ai-stats-row.failure-row span:last-child,
+.ai-stats-row.failure-row .failure-msg {
+  color: var(--danger, #e53e3e);
+  max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.ai-stats-row.failure-row span:first-child { color: var(--ink-muted); }
+
+.ai-stats-failures, .ai-stats-recent-failures { margin-top: 4px; }
+
 /* ── Progress ── */
 .active-progress-card {
   margin-top: 12px;
