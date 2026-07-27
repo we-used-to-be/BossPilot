@@ -16,9 +16,7 @@ async function walk(dir) {
 const targets = [
   ...await walk('src'),
   ...await walk('tests'),
-  ...await walk('scripts'),
-  '../desktop-bridge/server.js',
-  '../desktop-bridge/cli.js'
+  ...await walk('scripts')
 ];
 
 for (const target of targets) {

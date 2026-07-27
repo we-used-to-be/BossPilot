@@ -333,6 +333,7 @@
             <label class="field"><span>模型名称</span><input id="modelName" type="text" list="deepseekV4Models" placeholder="deepseek-v4-pro"><small>默认 deepseek-v4-pro；追求速度和成本可用 deepseek-v4-flash。</small></label>
             <datalist id="deepseekV4Models"><option value="deepseek-v4-pro"></option><option value="deepseek-v4-flash"></option></datalist>
             <label class="field"><span>API Key</span><input id="apiKey" type="password" autocomplete="off" placeholder="保存后显示 ***"></label>
+            <label class="field"><span>自定义招呼语要求</span><textarea id="customInstruction" rows="4" maxlength="1600" placeholder="例如：语气简洁自然，优先强调 React 项目经验"></textarea><small>仅补充招呼语风格；不能覆盖事实、安全规则或 JSON 输出格式。</small></label>
             <div class="button-row"><button class="button button-secondary" id="testAi">测试 AI 连接</button><span class="inline-result" id="aiTestResult"></span></div>
           </div>
         </details>
@@ -351,45 +352,6 @@
           <span>微信：easymoneysniperchris</span>
         </footer>
       </section>
-
-      <section class="page" data-page-panel="openclaw" aria-labelledby="navOpenClaw">
-        <div class="page-heading">
-          <div><span class="eyebrow">本地自动化</span><h1>OpenClaw</h1><p>连接桌面桥接、控制任务并读取日报</p></div>
-          <span class="pill" id="bridgePill">未检测</span>
-        </div>
-
-        <div class="bridge-hero">
-          <div class="bridge-icon">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 108 8M12 8a4 4 0 104 4M12 12h8"/></svg>
-          </div>
-          <div><strong>桌面桥接</strong><p>连接本机 OpenClaw 服务，扩展也可独立运行。</p></div>
-          <button class="button button-secondary small" id="checkBridge">检测连接</button>
-        </div>
-
-        <article class="module-card">
-          <div class="module-title"><div><b>桌面任务控制</b><small>命令写入本机桥接队列</small></div></div>
-          <div class="control-grid">
-            <button class="button button-primary" data-bridge-command="start">开始</button>
-            <button class="button button-secondary" data-bridge-command="pause">暂停</button>
-            <button class="button button-ghost danger" data-bridge-command="stop">停止</button>
-          </div>
-        </article>
-
-        <article class="module-card report-card">
-          <div class="module-title"><div><b>求职日报</b><small>由本机桥接汇总</small></div><button class="text-button" id="loadBridgeReport">刷新日报</button></div>
-          <pre class="report-box" id="bridgeReport">尚未读取。</pre>
-        </article>
-
-        <details class="module-card collapsible" data-collapsible="bridge-diagnostic">
-          <summary>
-            <span><b>桌面桥接诊断</b><small>状态、版本与本地数据库</small></span>
-            <i class="chevron"></i>
-          </summary>
-          <div class="module-body">
-            <pre class="code-box no-margin" id="bridgeDiagnostic">—</pre>
-          </div>
-        </details>
-      </section>
     </main>
 
     <nav class="bottom-nav" aria-label="主导航">
@@ -404,9 +366,6 @@
       </button>
       <button id="navSettings" class="nav-item" data-page="settings" aria-label="设置">
         <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8a4 4 0 100 8 4 4 0 000-8zM4 12l2-1 .4-1.2-1-2 2.4-2.4 2 1L11 6V4h2v2l1.2.4 2-1 2.4 2.4-1 2L18 11l2 1v2l-2 1-.4 1.2 1 2-2.4 2.4-2-1L13 20v2h-2v-2l-1.2-.4-2 1-2.4-2.4 1-2L6 15l-2-1z"/></svg></span><b>设置</b>
-      </button>
-      <button id="navOpenClaw" class="nav-item" data-page="openclaw" aria-label="OpenClaw">
-        <span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4a8 8 0 108 8M12 8a4 4 0 104 4M12 12h8"/></svg></span><b>OpenClaw</b>
       </button>
     </nav>
   </div>

@@ -3,7 +3,6 @@ import { normalizeConversationIdentity, deriveConversationReservationKey, sameRe
 import { TERMINAL_RUN_STATUSES, taskStageMeta } from './lib/task-state.js';
 import { rerankPending } from './lib/job-priority.js';
 
-const BRIDGE_ENDPOINTS = ['http://127.0.0.1:17899', 'http://localhost:17899'];
 const EXPECTED_CONTENT_VERSION = '1.3.0';
 const CONTENT_SCRIPT_FILE = 'content-v37.js';
 const storage = {
@@ -932,6 +931,24 @@ async function init() {
     };
     patch.v130SingleValidationMigration = true;
   }
+  if (!current.aiTokenFlowMigration) {
+    const baseConfig = patch.config || current.config || {};
+    const customInstruction = String(baseConfig.customInstruction || baseConfig.customPrompt || '').trim();
+    patch.config = {
+      ...DEFAULTS.config,
+      ...baseConfig,
+      customInstruction,
+      customPrompt: customInstruction
+    };
+    const resumeText = String(current.resumeText || '').trim();
+    if (resumeText.length >= 30) {
+      patch.resumeHash = await hashResumeText(resumeText);
+      patch.profileFacts = normalizeProfileFacts(
+        current.profile?.facts || buildLocalProfile(resumeText).facts
+      );
+    }
+    patch.aiTokenFlowMigration = true;
+  }
   if (Object.keys(patch).length) await storage.set(patch);
   const { stats } = await storage.get('stats');
   if (!stats || stats.date !== today()) {
@@ -960,7 +977,6 @@ async function writeEvent(level, message, data = {}) {
   const event = { id: crypto.randomUUID(), ts: Date.now(), level, message, data };
   events.unshift(event);
   await storage.set({ events: events.slice(0, 300) });
-  bridge('/sync', { event }).catch(() => {});
   return event;
 }
 
@@ -1094,9 +1110,9 @@ async function retryFailedTask(runId) {
   }
   if (!item) throw new Error('该历史任务缺少岗位或招呼语信息，无法直接重试');
   if (item.status === 'sent') throw new Error('该岗位已经投递成功，不会重复投递');
+  item = await ensurePendingGreeting(item);
   item = {
     ...item,
-    deliveryGreeting: String(item.deliveryGreeting || item.analysis?.greeting || '').trim(),
     status: 'approved', error: '', approvedAt: Date.now(), runId: run.id
   };
   const nextPending = pending.some(entry => entry.id === item.id)
@@ -1161,7 +1177,7 @@ async function retryAllFailedTasks() {
       nextPending.unshift(item);
     }
     if (!item || item.status === 'sent') continue;
-    item.deliveryGreeting = String(item.deliveryGreeting || item.analysis?.greeting || '').trim();
+    item = await ensurePendingGreeting(item);
     item.status = queue.length ? 'approved_queue' : 'approved';
     item.approvedAt = Date.now();
     item.error = '';
@@ -1353,34 +1369,6 @@ async function sendToBoss(message) {
   const tab = await activeBossTab();
   if (!tab) throw new Error('请先打开并登录 BOSS 直聘');
   return sendToBossTab(tab, message);
-}
-
-async function bridge(path, body) {
-  const failures = [];
-  const timeoutMs = path === '/parse-resume' ? 190000 : 8000;
-  for (const base of BRIDGE_ENDPOINTS) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(`${base}${path}`, {
-        method: body ? 'POST' : 'GET',
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-        cache: 'no-store',
-        credentials: 'omit',
-        signal: controller.signal
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.error || `增强识别组件返回 HTTP ${response.status}`);
-      return payload;
-    } catch (error) {
-      failures.push(error?.name === 'AbortError' ? '连接超时' : String(error?.message || error));
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-  const detail = failures.find(message => message && message !== 'Failed to fetch');
-  throw new Error(detail || '增强识别组件未启动');
 }
 
 function extractJson(raw) {
@@ -1839,6 +1827,52 @@ function normalizeStringList(value, limit = 30) {
     .slice(0, limit);
 }
 
+function normalizeFactList(value, limit = 8, maxLength = 180) {
+  const values = Array.isArray(value) ? value : [];
+  return uniq(values.map(item => {
+    if (typeof item === 'string') return item.trim();
+    if (!item || typeof item !== 'object') return '';
+    return String(item.summary || item.description || item.name || item.title || '').trim();
+  }))
+    .filter(Boolean)
+    .map(item => item.slice(0, maxLength))
+    .slice(0, limit);
+}
+
+function normalizeProfileFacts(facts = {}) {
+  return {
+    skills: normalizeStringList(facts.skills, 30),
+    projects: normalizeFactList(facts.projects, 6),
+    experiences: normalizeFactList(facts.experiences, 6),
+    education: normalizeFactList(facts.education, 4),
+    certificates: normalizeFactList(facts.certificates, 6)
+  };
+}
+
+async function hashResumeText(resumeText) {
+  const normalized = cleanResumeText(resumeText);
+  const bytes = new TextEncoder().encode(normalized);
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function ensureProfileFacts(stored = null) {
+  const snapshot = stored || await storage.get(['profileFacts', 'resumeHash', 'resumeText']);
+  const resumeText = String(snapshot.resumeText || '');
+  const currentHash = await hashResumeText(resumeText);
+  if (snapshot.profileFacts && snapshot.resumeHash === currentHash) {
+    return {
+      profileFacts: normalizeProfileFacts(snapshot.profileFacts),
+      resumeHash: currentHash,
+      reused: true
+    };
+  }
+  const localProfile = buildLocalProfile(resumeText);
+  const profileFacts = normalizeProfileFacts(localProfile.facts);
+  await storage.set({ profileFacts, resumeHash: currentHash });
+  return { profileFacts, resumeHash: currentHash, reused: false };
+}
+
 function normalizeDirections(value, existing = []) {
   const previous = new Map((Array.isArray(existing) ? existing : []).map(item => {
     const name = typeof item === 'string' ? item : item?.name;
@@ -2211,28 +2245,111 @@ function normalizeApplicantGreeting(result, job, profile) {
   return raw.slice(0, 160);
 }
 
+function buildJobMatchProfile(profile = {}, profileFacts = {}) {
+  return {
+    summary: String(profile.summary || '').slice(0, 500),
+    primaryDirections: normalizeStringList(
+      profile.primaryDirections?.map(item => typeof item === 'string' ? item : item?.name),
+      3
+    ),
+    hardConstraints: {
+      locations: normalizeStringList(profile.hardConstraints?.locations, 10),
+      employmentTypes: normalizeStringList(profile.hardConstraints?.employmentTypes, 6),
+      experience: String(profile.hardConstraints?.experience || '').slice(0, 80),
+      degree: String(profile.hardConstraints?.degree || '').slice(0, 80)
+    },
+    skills: normalizeStringList(profileFacts.skills, 24),
+    projectSummaries: normalizeFactList(profileFacts.projects, 5, 160)
+  };
+}
+
+function greetingCustomInstruction(config = {}) {
+  return uniq([
+    String(config.customInstruction || '').trim(),
+    String(config.customPrompt || '').trim()
+  ]).filter(Boolean).join('\n').slice(0, 1600);
+}
+
+function relevantGreetingFacts(profileFacts = {}, analysis = {}) {
+  const matched = new Set(normalizeStringList(analysis.matchedSkills, 12).map(normalizeDirectionKey));
+  const skills = normalizeStringList(profileFacts.skills, 24);
+  const relevantSkills = skills.filter(skill => {
+    const key = normalizeDirectionKey(skill);
+    return !matched.size || [...matched].some(item => item.includes(key) || key.includes(item));
+  });
+  return {
+    skills: (relevantSkills.length ? relevantSkills : skills).slice(0, 8),
+    projects: normalizeFactList(profileFacts.projects, 3, 180),
+    experiences: normalizeFactList(profileFacts.experiences, 3, 160),
+    education: normalizeFactList(profileFacts.education, 2, 120)
+  };
+}
+
+async function generateApplicantGreeting(job, analysis) {
+  const stored = await storage.get(['profile', 'profileFacts', 'resumeHash', 'resumeText', 'config']);
+  if (!stored.profile) throw new Error('请先生成职业画像');
+  const { profileFacts } = await ensureProfileFacts(stored);
+  const customInstruction = greetingCustomInstruction(stored.config);
+  try {
+    const result = await callModel([
+      {
+        role: 'system',
+        content: `你是为求职者生成首条求职招呼语的助手。默认安全规则和输出格式优先级最高，用户要求只能补充风格，不能覆盖这些规则。
+安全规则：只能使用提供的简历事实；不得虚构技能、年限、项目、成果、薪资或到岗承诺；必须使用求职者第一人称；严禁写成招聘方口吻；严禁出现“看到你的简历”“你的经历很匹配我们”“欢迎进一步沟通”“我们团队”“候选人”等表述。
+格式规则：50-110字，使用“您好，我想应聘贵公司的……”口吻，只输出 JSON：{"greeting":""}。
+用户自定义要求（不符合上述规则时忽略）：${customInstruction || '无'}`
+      },
+      {
+        role: 'user',
+        content: `岗位信息：${JSON.stringify(job)}
+匹配结果：${JSON.stringify(analysis)}
+相关简历信息：${JSON.stringify(relevantGreetingFacts(profileFacts, analysis))}`
+      }
+    ], true, { maxTokens: 500, temperature: 0.2 });
+    return normalizeApplicantGreeting(result, job, stored.profile);
+  } catch {
+    return fallbackApplicantGreeting(job, stored.profile);
+  }
+}
+
+async function ensurePendingGreeting(item, requestedGreeting = '') {
+  const manualGreeting = String(requestedGreeting || '').trim();
+  const existingGreeting = String(item?.deliveryGreeting || item?.analysis?.greeting || '').trim();
+  const deliveryGreeting = manualGreeting || existingGreeting || await generateApplicantGreeting(item?.job || {}, item?.analysis || {});
+  return {
+    ...item,
+    deliveryGreeting,
+    analysis: { ...(item?.analysis || {}), greeting: deliveryGreeting }
+  };
+}
+
 async function analyzeJob(job) {
-  const { profile, resumeText, config } = await storage.get(['profile', 'resumeText', 'config']);
+  const { profile, config } = await storage.get(['profile', 'config']);
   if (!profile) throw new Error('请先生成职业画像');
+  const { profileFacts } = await ensureProfileFacts();
   const result = await callModel([
     {
       role: 'system',
-      content: '你是为求职者服务的岗位匹配审查器，不是招聘方。用户是正在应聘岗位的求职者。任何能力、年限、项目和成果都不能超出简历事实。先判断学历、经验、地点等硬条件，再判断方向与技能。输出 JSON：{"score":0,"decision":"recommend|cautious|reject","hardBlocks":[],"matchedEvidence":[],"gaps":[],"risks":[],"reason":"","greeting":""}。greeting 是求职者发给招聘方/HR 的第一人称求职招呼语，50-110字，应使用“您好，我想应聘贵公司的……”口吻。严禁写成招聘方口吻，严禁出现“看到你的简历”“你的经历很匹配我们”“欢迎进一步沟通”“我们团队”“候选人”等表述；不得承诺薪资、到岗、年限或不存在的能力。'
+      content: '你是为求职者服务的岗位匹配审查器。只能根据提供的职业画像、技能和项目摘要判断，不得虚构事实。先判断学历、经验、地点等硬条件，再判断方向与技能；存在硬性不匹配时 decision 必须为 reject，并写入 risks。只输出 JSON：{"score":0,"decision":"recommend|cautious|reject","matchedSkills":[],"gaps":[],"risks":[],"reason":""}。'
     },
     {
       role: 'user',
-      content: `职业画像：${JSON.stringify(profile)}
-简历：${String(resumeText || '').slice(0, 15000)}
+      content: `职业画像与结构化简历：${JSON.stringify(buildJobMatchProfile(profile, profileFacts))}
 岗位：${JSON.stringify(job)}`
     }
-  ]);
-  result.score = Math.max(0, Math.min(100, Number(result.score || 0)));
-  result.greeting = normalizeApplicantGreeting(result, job, profile);
-  if (Array.isArray(result.hardBlocks) && result.hardBlocks.length) result.decision = 'reject';
-  if (result.score < Number(config?.minScore || 75) && result.decision === 'recommend') {
-    result.decision = 'cautious';
+  ], true, { maxTokens: 900, temperature: 0.05 });
+  const normalized = {
+    score: Math.max(0, Math.min(100, Number(result.score || 0))),
+    decision: ['recommend', 'cautious', 'reject'].includes(result.decision) ? result.decision : 'cautious',
+    matchedSkills: normalizeStringList(result.matchedSkills, 12),
+    gaps: normalizeStringList(result.gaps, 10),
+    risks: normalizeStringList(result.risks, 10),
+    reason: String(result.reason || '').trim().slice(0, 500)
+  };
+  if (normalized.score < Number(config?.minScore || 75) && normalized.decision === 'recommend') {
+    normalized.decision = 'cautious';
   }
-  return result;
+  return normalized;
 }
 
 function createTasks(profile, config, directionPlan) {
@@ -2283,13 +2400,14 @@ async function dispatchNextAutoPending() {
   if (config.executionMode !== 'auto') return { started: false, reason: 'not-auto' };
   if (workflow.pendingApplyId) return { started: false, reason: 'busy', pendingApplyId: workflow.pendingApplyId };
   const ranked = rerankPending(pending);
-  const candidate = ranked.find(entry => entry.status === 'approved_queue');
+  let candidate = ranked.find(entry => entry.status === 'approved_queue');
   if (!candidate) {
     await storage.set({ pending: ranked });
     return { started: false, reason: 'empty' };
   }
+  candidate = await ensurePendingGreeting(candidate);
   const next = rerankPending(ranked.map(entry => entry.id === candidate.id
-    ? { ...entry, status: 'approved', approvedAt: entry.approvedAt || Date.now() }
+    ? { ...candidate, status: 'approved', approvedAt: candidate.approvedAt || Date.now() }
     : entry));
   await storage.set({ pending: next });
   const run = await updateTaskRunByPending(candidate.id, {
@@ -2342,7 +2460,7 @@ async function addPending(item) {
     ...item,
     runId: run.id,
     id: item.id || crypto.randomUUID(),
-    deliveryGreeting: String(item.deliveryGreeting || item.analysis?.greeting || '').trim(),
+    deliveryGreeting: String(item.deliveryGreeting || '').trim(),
     status: config.executionMode === 'auto' ? 'approved_queue' : 'pending',
     createdAt: Date.now()
   };
@@ -2358,11 +2476,11 @@ async function approvePending(id, greeting = '') {
   const { pending = [] } = await storage.get('pending');
   const item = pending.find(entry => entry.id === id);
   if (!item) throw new Error('待确认岗位不存在');
-  const lockedGreeting = String(greeting || item.deliveryGreeting || item.analysis?.greeting || '').trim();
+  const greetedItem = await ensurePendingGreeting(item, greeting);
+  const lockedGreeting = greetedItem.deliveryGreeting;
   const updatedItem = {
-    ...item,
+    ...greetedItem,
     deliveryGreeting: lockedGreeting,
-    analysis: { ...(item.analysis || {}), greeting: lockedGreeting },
     status: 'approved',
     approvedAt: Date.now()
   };
@@ -2397,15 +2515,20 @@ async function approveAllPending() {
   const { pending = [] } = await storage.get('pending');
   const candidates = rerankPending(pending).filter(entry => entry.status === 'pending');
   if (!candidates.length) return { count: 0 };
-  const ids = new Set(candidates.map(entry => entry.id));
+  const greetedCandidates = [];
+  for (const candidate of candidates) {
+    greetedCandidates.push(await ensurePendingGreeting(candidate));
+  }
+  const greetedById = new Map(greetedCandidates.map(entry => [entry.id, entry]));
+  const ids = new Set(greetedCandidates.map(entry => entry.id));
   const next = pending.map(entry => ids.has(entry.id)
-    ? { ...entry, status: 'approved_queue', approvedAt: Date.now() }
+    ? { ...greetedById.get(entry.id), status: 'approved_queue', approvedAt: Date.now() }
     : entry);
-  const first = candidates[0];
+  const first = greetedCandidates[0];
   await storage.set({ pending: next });
   const { stats } = await storage.get('stats');
   await storage.set({ stats: { ...stats, pending: 0 } });
-  for (const [index, candidate] of candidates.entries()) {
+  for (const [index, candidate] of greetedCandidates.entries()) {
     await updateTaskRunByPending(candidate.id, {
       status: index === 0 ? 'running' : 'queued',
       stage: 'queued',
@@ -2420,12 +2543,12 @@ async function approveAllPending() {
     running: true,
     paused: false,
     phase: 'apply',
-    statusText: `批量投递 1/${candidates.length}：${first.job?.title || '岗位'}`,
+    statusText: `批量投递 1/${greetedCandidates.length}：${first.job?.title || '岗位'}`,
     pendingApplyId: first.id,
     activeRunId: first.runId || null
   });
   await sendToBoss({ type: 'RUN' });
-  return { count: candidates.length };
+  return { count: greetedCandidates.length };
 }
 
 async function rejectAllPending() {
@@ -2510,25 +2633,6 @@ async function skipPendingTask(id, reason = '该岗位需要外部网申，已�
   return { item: skippedItem, queued: queued || null };
 }
 
-async function handleBridgeCommands() {
-  try {
-    const response = await bridge('/commands');
-    for (const command of response.commands || []) {
-      if (command.type === 'start') {
-        await patchWorkflow({ running: true, paused: false, statusText: '由 OpenClaw 启动' });
-        await sendToBoss({ type: 'RUN' });
-      } else if (command.type === 'pause') {
-        await patchWorkflow({ paused: true, statusText: '由 OpenClaw 暂停' });
-      } else if (command.type === 'stop') {
-        await patchWorkflow({ running: false, paused: true, phase: 'idle', statusText: '由 OpenClaw 停止' });
-      }
-    }
-  } catch {
-    // 桌面桥接未运行时保持浏览器扩展独立可用。
-  }
-}
-
-chrome.runtime.onInstalled.addListener(init);
 chrome.runtime.onStartup.addListener(init);
 init();
 
@@ -2536,7 +2640,6 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== 'jobclaw-tick') return;
   const { workflow } = await storage.get('workflow');
   if (workflow?.running && !workflow.paused) sendToBoss({ type: 'RUN' }).catch(() => {});
-  handleBridgeCommands();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
@@ -2567,6 +2670,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         incoming.executionMode = incoming.executionMode === 'auto' ? 'auto' : 'review';
         incoming.dailyTarget = Math.max(1, Math.min(300, Number(incoming.dailyTarget || config?.dailyTarget || 150)));
         incoming.discoveryLimit = 0;
+        incoming.customInstruction = String(incoming.customInstruction || incoming.customPrompt || '').trim().slice(0, 1600);
+        incoming.customPrompt = incoming.customInstruction;
         incoming.model.baseUrl = String(incoming.model.baseUrl || 'https://api.deepseek.com').trim();
         incoming.model.model = String(incoming.model.model || 'deepseek-v4-pro').trim();
         await storage.set({ config: { ...(config || {}), ...incoming } });
@@ -2574,11 +2679,23 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         reply({ ok: true });
         break;
       }
-      case 'SET_RESUME':
-        await storage.set({ resumeText: String(message.text || '') });
-        await writeEvent('info', '简历文本已保存', { length: String(message.text || '').length });
+      case 'SET_RESUME': {
+        const resumeText = String(message.text || '');
+        const { resumeHash: previousHash, profileFacts: previousFacts } = await storage.get(['resumeHash', 'profileFacts']);
+        const resumeHash = await hashResumeText(resumeText);
+        const profileFacts = resumeHash === previousHash && previousFacts
+          ? normalizeProfileFacts(previousFacts)
+          : String(resumeText).trim().length >= 30
+            ? normalizeProfileFacts(buildLocalProfile(resumeText).facts)
+            : null;
+        await storage.set({ resumeText, resumeHash, profileFacts });
+        await writeEvent('info', '简历文本已保存', {
+          length: resumeText.length,
+          factsReused: Boolean(profileFacts && resumeHash === previousHash)
+        });
         reply({ ok: true });
         break;
+      }
       case 'SET_RESUME_SOURCE': {
         const file = message.file || null;
         if (!file?.name || !file?.dataUrl) throw new Error('简历原文件数据不完整');
@@ -2602,17 +2719,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         if (!String(resumeSourceFile.name || '').toLowerCase().endsWith('.pdf') && resumeSourceFile.type !== 'application/pdf') {
           throw new Error('当前保留的文件不是 PDF');
         }
-        try {
-          const result = await bridge('/parse-resume', {
-            name: resumeSourceFile.name,
-            type: resumeSourceFile.type,
-            dataUrl: resumeSourceFile.dataUrl
-          });
-          if (result?.text) await writeEvent('info', 'PDF 本机深度识别完成', { method: result.method, length: result.text.length });
-          reply({ ok: Boolean(result?.ok), result, error: result?.error || '' });
-        } catch (error) {
-          reply({ ok: false, error: `桌面桥接不可用：${error.message}` });
-        }
+        reply({ ok: false, error: 'PDF 深度识别功能已移除，请使用文本型 PDF 或直接粘贴简历正文。' });
         break;
       }
       case 'SET_IMAGE':
@@ -2624,6 +2731,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'ENSURE_PROFILE_DRAFT': {
         const { resumeText, profile: currentProfile, profileDraft: currentDraft } = await storage.get(['resumeText', 'profile', 'profileDraft']);
         if (profileDraftHasCore(currentDraft) && profileHasCore(currentProfile)) {
+          await ensureProfileFacts();
           reply({ ok: true, profile: currentProfile, profileDraft: currentDraft, skipped: true });
           break;
         }
@@ -2631,7 +2739,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           const profileDraft = profileDraftHasAny(currentDraft)
             ? normalizeProfileDraft(currentDraft, profileToDraft(currentProfile, 'profile-repair'))
             : profileToDraft(currentProfile, 'profile-repair');
-          await storage.set({ profileDraft });
+          const resumeHash = await hashResumeText(resumeText || '');
+          const profileFacts = normalizeProfileFacts(currentProfile.facts || buildLocalProfile(resumeText || '').facts);
+          await storage.set({ profileDraft, profileFacts, resumeHash });
           reply({ ok: true, profile: currentProfile, profileDraft, repaired: true });
           break;
         }
@@ -2647,7 +2757,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           preserveEdits: true,
           preserveCustom: true
         });
-        await storage.set({ profile, profileDraft, directionPlan });
+        const resumeHash = await hashResumeText(resumeText || '');
+        const profileFacts = normalizeProfileFacts(profile.facts);
+        await storage.set({ profile, profileDraft, directionPlan, profileFacts, resumeHash });
         await writeEvent('info', '已从已保存简历恢复可编辑画像', { directions: profile.primaryDirections });
         reply({ ok: true, profile, profileDraft, directionPlan, generation: profile.generation });
         break;
@@ -2655,6 +2767,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'BUILD_PROFILE': {
         const { resumeText, directionPlan: currentDirectionPlan } = await storage.get(['resumeText', 'directionPlan']);
         const profile = await buildProfile(resumeText || '');
+        const profileFacts = normalizeProfileFacts(profile.facts);
+        const resumeHash = await hashResumeText(resumeText || '');
         const profileDraft = profileToDraft(profile, profile.generation?.mode || 'generated');
         const directionPlan = buildDirectionPlan(profile, currentDirectionPlan, {
           confirmed: false,
@@ -2662,7 +2776,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           preserveEdits: true,
           preserveCustom: true
         });
-        await storage.set({ profile, profileDraft, directionPlan });
+        await storage.set({ profile, profileFacts, resumeHash, profileDraft, directionPlan });
         const generation = profile.generation || {};
         const local = generation.mode === 'local-fallback';
         const eventTitle = !local
@@ -2685,8 +2799,10 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         break;
       }
       case 'SAVE_PROFILE': {
-        const { profile: currentProfile, config = {}, profileDraft: currentDraft, directionPlan: currentDirectionPlan } = await storage.get(['profile', 'config', 'profileDraft', 'directionPlan']);
+        const { profile: currentProfile, config = {}, profileDraft: currentDraft, directionPlan: currentDirectionPlan, resumeText = '' } = await storage.get(['profile', 'config', 'profileDraft', 'directionPlan', 'resumeText']);
         const profile = normalizeProfile(message.profile, currentProfile);
+        const profileFacts = normalizeProfileFacts(profile.facts);
+        const resumeHash = await hashResumeText(resumeText);
         const profileDraft = profileToDraft(profile, 'manual-save');
         const keepDirectionConfirmation = Boolean(
           currentDirectionPlan?.confirmed
@@ -2707,7 +2823,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           degrees: hard.degree ? [hard.degree] : (config.degrees || []),
           salary: hard.salary || config.salary || '不限'
         };
-        await storage.set({ profile, profileDraft, directionPlan, config: nextConfig });
+        await storage.set({ profile, profileFacts, resumeHash, profileDraft, directionPlan, config: nextConfig });
         await writeEvent('info', '职业画像已手动保存', { directions: profile.primaryDirections });
         reply({ ok: true, profile, profileDraft, directionPlan, config: nextConfig });
         break;
@@ -2972,10 +3088,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         break;
       case 'AUTO_APPROVE': {
         const { pending = [] } = await storage.get('pending');
+        const item = pending.find(entry => entry.id === message.id);
+        if (!item) throw new Error('自动投递岗位不存在');
+        const greetedItem = await ensurePendingGreeting(item, message.greeting || '');
         const next = rerankPending(pending.map(entry => entry.id === message.id
           ? {
-              ...entry,
-              deliveryGreeting: String(message.greeting || entry.deliveryGreeting || entry.analysis?.greeting || '').trim(),
+              ...greetedItem,
               status: 'approved_queue',
               approvedAt: Date.now()
             }
@@ -3127,18 +3245,6 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         reply({ ok: true });
         break;
       }
-      case 'BRIDGE_STATUS':
-        try { reply({ ok: true, result: await bridge('/status') }); }
-        catch (error) { reply({ ok: false, error: error.message }); }
-        break;
-      case 'BRIDGE_REPORT':
-        try { reply({ ok: true, result: await bridge('/report') }); }
-        catch (error) { reply({ ok: false, error: error.message }); }
-        break;
-      case 'BRIDGE_COMMAND':
-        try { reply({ ok: true, result: await bridge('/command', { type: message.command }) }); }
-        catch (error) { reply({ ok: false, error: error.message }); }
-        break;
       default:
         reply({ ok: false, error: 'unknown message' });
     }

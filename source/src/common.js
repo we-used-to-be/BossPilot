@@ -12,6 +12,8 @@ export const DEFAULTS = {
     salary: '不限',
     sendResumeImage: true,
     sendOnlineResume: false,
+    customInstruction: '',
+    customPrompt: '',
     betweenJobsSeconds: 12,
     attachmentDelaySeconds: 4,
     requireSingleJobValidation: true,
@@ -24,6 +26,8 @@ export const DEFAULTS = {
     }
   },
   profile: null,
+  profileFacts: null,
+  resumeHash: '',
   profileDraft: null,
   directionPlan: null,
   resumeText: '',

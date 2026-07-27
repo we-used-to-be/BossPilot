@@ -8,7 +8,8 @@ const PROFILE_FORM_IDS = [
 ];
 const SETTINGS_FORM_IDS = [
   'locations', 'types', 'experience', 'degree', 'salary', 'minScore',
-  'dailyTarget', 'betweenJobsSeconds', 'attachmentDelaySeconds', 'sendImage', 'sendOnline', 'baseUrl', 'modelName', 'apiKey'
+  'dailyTarget', 'betweenJobsSeconds', 'attachmentDelaySeconds', 'sendImage', 'sendOnline',
+  'baseUrl', 'modelName', 'apiKey', 'customInstruction'
 ];
 const FORM_IDS = new Set(['resumeText', ...PROFILE_FORM_IDS, ...SETTINGS_FORM_IDS]);
 const dirtyFields = new Set();
@@ -684,18 +685,37 @@ function createQueueItem(item) {
   score.textContent = item.priorityRank ? `#${item.priorityRank} · ${item.analysis?.score ?? 0}` : String(item.analysis?.score ?? 0);
   head.append(titleWrap, score);
 
+  const openJobBtn = document.createElement('button');
+  openJobBtn.className = 'button button-ghost small queue-open-job';
+  openJobBtn.textContent = '打开岗位';
+  openJobBtn.title = '在新标签页打开岗位详情';
+  openJobBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!item.job?.url) {
+      showToast('该岗位暂无链接', true);
+      return;
+    }
+    openJobBtn.disabled = true;
+    const result = await send('OPEN_TASK_JOB', { url: item.job.url });
+    if (!result.ok) showToast(result.error || '打开岗位失败', true);
+    openJobBtn.disabled = false;
+  });
+  if (item.job?.url) card.append(openJobBtn);
+
   const reason = document.createElement('div');
   reason.className = 'queue-reason';
   reason.textContent = item.analysis?.reason || 'AI 已判定为推荐岗位。';
   const greetingWrap = document.createElement('label');
   greetingWrap.className = 'queue-greeting-wrap';
   const greetingLabel = document.createElement('span');
-  greetingLabel.textContent = '将以求职者身份发送，可直接修改';
+  greetingLabel.textContent = item.analysis?.greeting
+    ? '将以求职者身份发送，可直接修改'
+    : '确认沟通时生成；也可在此直接填写';
   const greeting = document.createElement('textarea');
   greeting.className = 'queue-greeting-editor';
   greeting.rows = 5;
   greeting.value = item.analysis?.greeting || '';
-  greeting.placeholder = '请输入你希望发送给招聘方的求职招呼语';
+  greeting.placeholder = '留空则在确认投递前根据岗位与自定义要求生成';
   greetingWrap.append(greetingLabel, greeting);
 
   const actions = document.createElement('div');
@@ -1026,6 +1046,7 @@ function renderForms(force = false) {
   setFieldValue('baseUrl', model.baseUrl || 'https://api.deepseek.com', force);
   setFieldValue('modelName', model.model || 'deepseek-v4-pro', force);
   setFieldValue('apiKey', model.apiKey || '', force);
+  setFieldValue('customInstruction', config.customInstruction || config.customPrompt || '', force);
   renderDirectionPlan(force);
 }
 
@@ -1231,45 +1252,17 @@ function applyResumeText(text, { fileName = '简历文件', method = '本地解�
   updateUnsavedIndicators();
 }
 
-async function parseStoredPdfWithBridge({ quiet = false } = {}) {
-  setResumeImportNotice({
-    visible: true,
-    tone: 'progress',
-    title: '正在进行本机深度识别',
-    message: '正在调用本机增强识别。文本型 PDF 会优先提取文字，扫描件会自动转入系统 OCR。',
-    actions: false
-  });
-  setText('resumeParsePill', '深度识别中');
-  const result = await send('PARSE_RESUME_PDF');
-  if (result.ok && isReadableResumeText(result.result?.text)) {
-    const methodLabels = {
-      'macos-metadata': 'macOS 文档识别',
-      'pdftotext': '本机 PDF 引擎',
-      'macos-pdfkit': 'macOS PDFKit',
-      'macos-vision-ocr': 'macOS Vision OCR'
-    };
-    applyResumeText(result.result.text, {
-      fileName: currentResumeSource?.name || state.resumeSourceFile?.name || 'PDF 简历',
-      method: methodLabels[result.result.method] || '本机深度识别'
-    });
-    if (!quiet) showToast('PDF 已通过本机深度识别');
-    return true;
-  }
-  const rawMessage = result.error || result.result?.error || '';
-  const bridgeUnavailable = /未启动|Failed to fetch|fetch|连接超时|ECONNREFUSED/i.test(rawMessage);
-  setText('resumeParsePill', bridgeUnavailable ? '需启用增强识别' : '等待处理');
+async function parseStoredPdfFallback() {
+  showToast('PDF 深度识别功能已移除，请使用文本型 PDF 或直接粘贴简历正文。', true);
+  setText('resumeParsePill', '无法识别');
   setResumeImportNotice({
     visible: true,
     tone: 'warning',
-    title: bridgeUnavailable ? '这份 PDF 需要增强识别' : '没有识别到可靠正文',
-    message: bridgeUnavailable
-      ? '原文件已经保留。运行完整包根目录里的“安装桌面桥接-mac.command”一次，再点“重新识别”；普通文本型 PDF 不需要这一步。'
-      : '这可能是一份扫描版或受保护 PDF。可以再次识别，也可以直接在下方编辑区输入内容。',
+    title: '无法识别 PDF',
+    message: 'PDF 深度识别功能已移除。请使用文本型 PDF，或直接在下方编辑区粘贴简历正文。',
     actions: true
   });
-  resetResumeEditorNote(bridgeUnavailable
-    ? '启用增强识别后可自动处理扫描件；当前不会生成乱码画像。'
-    : '原 PDF 已保留，识别成功前不会生成错误画像。', true);
+  resetResumeEditorNote('PDF 深度识别已移除，请粘贴正文。', true);
   return false;
 }
 
@@ -1281,8 +1274,7 @@ function bindNavigation() {
     home: '首页 · 应聘者求职工作台',
     resume: '简历 · 原文与职业画像',
     messages: '消息 · 投递与确认',
-    settings: '设置 · 搜索与 AI',
-    openclaw: 'OpenClaw · 本地桥接'
+    settings: '设置 · 搜索与 AI'
   };
   activateMainPage = (page, resetScroll = true) => {
     const validPage = buttons.some(button => button.dataset.page === page) ? page : 'home';
@@ -1548,6 +1540,8 @@ async function saveSettings() {
     salary: $('salary').value.trim() || '不限',
     sendResumeImage: $('sendImage').checked,
     sendOnlineResume: $('sendOnline').checked,
+    customInstruction: $('customInstruction').value.trim(),
+    customPrompt: $('customInstruction').value.trim(),
     model: {
       ...(old.model || {}),
       baseUrl: $('baseUrl').value.trim() || 'https://api.deepseek.com',
@@ -1678,7 +1672,7 @@ function bindActions() {
         showToast('简历识别完成，请检查后保存');
       } catch (browserError) {
         if (!isPdf) throw browserError;
-        await parseStoredPdfWithBridge();
+        await parseStoredPdfFallback();
       }
     } catch (error) {
       setText('resumeFileName', `${file.name} · 文件已保留`);
@@ -1701,7 +1695,7 @@ function bindActions() {
       showToast('请先选择一个 PDF 简历', true);
       return;
     }
-    await parseStoredPdfWithBridge();
+    await parseStoredPdfFallback();
   });
   $('resumePasteAction').addEventListener('click', () => {
     const editor = $('resumeText');
@@ -1775,15 +1769,7 @@ function bindActions() {
     URL.revokeObjectURL(anchor.href);
   });
 
-  $('checkBridge').addEventListener('click', checkBridge);
-  $('loadBridgeReport').addEventListener('click', loadBridgeReport);
-  for (const button of document.querySelectorAll('[data-bridge-command]')) {
-    button.addEventListener('click', async () => {
-      const result = await send('BRIDGE_COMMAND', { command: button.dataset.bridgeCommand });
-      showToast(result.ok ? `OpenClaw 命令已发送：${button.dataset.bridgeCommand}` : result.error, !result.ok);
-      await checkBridge();
-    });
-  }
+  
 }
 
 async function ensureSavedResumeHasProfile() {
@@ -1798,21 +1784,6 @@ async function ensureSavedResumeHasProfile() {
   if (!result.skipped) showToast('职业画像初稿已恢复，后续修改会自动保留');
 }
 
-async function checkBridge() {
-  const result = await send('BRIDGE_STATUS');
-  setText('bridgeDiagnostic', JSON.stringify(result.ok ? result.result : { ok: false, error: result.error }, null, 2));
-  const pill = $('bridgePill');
-  pill.textContent = result.ok ? '已连接' : '未连接';
-  pill.classList.toggle('accent', result.ok);
-  return result;
-}
-
-async function loadBridgeReport() {
-  const result = await send('BRIDGE_REPORT');
-  setText('bridgeReport', result.ok ? (result.result?.report || JSON.stringify(result.result, null, 2)) : result.error);
-  if (!result.ok) showToast(result.error || '读取日报失败', true);
-}
-
 async function init() {
   bindResumeTabs();
   bindNavigation();
@@ -1823,7 +1794,6 @@ async function init() {
   await ensureSavedResumeHasProfile();
   renderForms(false);
   autoGrowProfileFields();
-  checkBridge();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden' && hasDirty(PROFILE_FORM_IDS)) persistProfileDraftNow();
   });

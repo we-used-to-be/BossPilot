@@ -26,12 +26,12 @@ for (const permission of ['storage', 'tabs', 'sidePanel', 'alarms', 'unlimitedSt
 const html = await readFile(`${root}/sidepanel.html`, 'utf8');
 const navPages = [...html.matchAll(/class="nav-item(?: is-active)?" data-page="([^"]+)"/g)].map(match => match[1]);
 const panels = [...html.matchAll(/data-page-panel="([^"]+)"/g)].map(match => match[1]);
-const expected = ['home', 'resume', 'messages', 'settings', 'openclaw'];
+const expected = ['home', 'resume', 'messages', 'settings'];
 if (JSON.stringify(navPages) !== JSON.stringify(expected)) throw new Error(`导航页面不正确：${JSON.stringify(navPages)}`);
 if (JSON.stringify(panels) !== JSON.stringify(expected)) throw new Error(`内容页面不正确：${JSON.stringify(panels)}`);
 if (!html.includes('id="readinessPill">0 / 4')) throw new Error('单条验收启动检查未加入');
 const collapsibleCount = (html.match(/data-collapsible=/g) || []).length;
-if (collapsibleCount !== 8) throw new Error(`明确折叠模块数量异常：${collapsibleCount}`);
+if (collapsibleCount !== 7) throw new Error(`明确折叠模块数量异常：${collapsibleCount}`);
 for (const id of ['setupValidationRow', 'setupValidationIcon', 'setupValidationStatus', 'resumeImportNotice', 'resumeRetryAction', 'resumePasteAction', 'expandResumeEditor', 'profileSummaryInput', 'profileGenerationPill', 'profileGenerationNote', 'saveProfile', 'activeTaskProgress', 'searchTaskList', 'deliveryTaskList', 'retryAllFailedTasks']) {
   if (!html.includes(`id="${id}"`)) throw new Error(`必要 UI 元素缺失：${id}`);
 }
@@ -51,8 +51,7 @@ for (const token of [
   'renderForms(false);',
   "setFieldValue('profileSummaryInput', draft.summary",
   "send('SET_RESUME_SOURCE'",
-  "send('PARSE_RESUME_PDF'",
-  'parseStoredPdfWithBridge',
+  'parseStoredPdfFallback',
   "editor.classList.toggle('is-expanded')",
   'ensureSavedResumeHasProfile',
   "send('ENSURE_PROFILE_DRAFT'",
@@ -69,24 +68,23 @@ for (const forbidden of ["querySelectorAll('.card')", 'querySelectorAll(".card")
 
 const styles = await readFile(`${root}/styles.css`, 'utf8');
 for (const token of [
-  'padding: 17px 16px 44px;',
-  'padding: 18px 19px;',
-  'height: clamp(250px, 35vh, 330px);',
+  'padding: 12px 12px 32px;',
+  'color-scheme: light;',
+  '--canvas: #ffffff;',
+  '--primary: #5645d4;',
   'grid-template-columns: minmax(0, .9fr) minmax(0, 1.15fr);',
   '.import-notice[data-tone="success"]',
   '.profile-generation-note',
-  '.profile-editor-card .field input:not(:placeholder-shown)',
   '.progress-track',
   '.search-task-item',
   '.delivery-task'
 ]) {
-  if (!styles.includes(token)) throw new Error(`UI5 间距样式缺失：${token}`);
+  if (!styles.includes(token)) throw new Error(`Notion 设计样式缺失：${token}`);
 }
-if (!styles.includes('top: 70px;') || styles.includes('bottom: 78px;')) throw new Error('Toast 可能遮挡底部操作区');
+if (!styles.includes('top: 58px;')) throw new Error('Toast 可能遮挡顶部操作区');
 
 const background = await readFile(`${root}/background.js`, 'utf8');
-if (!background.includes('BRIDGE_ENDPOINTS') || !background.includes('http://localhost:17899')) throw new Error('桥接双端点兜底缺失');
-for (const token of ['AI_JOB', 'profileDraft', 'ENSURE_PROFILE_DRAFT', 'SAVE_PROFILE_DRAFT', 'PROBE_BOSS', 'ensureBossReceiver', 'injectBossContent', 'chrome.scripting.executeScript', 'BUILD_LOCAL_PROFILE', 'BUILD_PROFILE', 'buildLocalProfile', 'local-fallback', 'SAVE_PROFILE', 'SET_RESUME_SOURCE', 'PARSE_RESUME_PDF', 'BRIDGE_STATUS', 'APPROVE', 'chrome.alarms', 'TASK_PROGRESS', 'SEARCH_TASK_PROGRESS', 'RETRY_FAILED_TASK', 'taskRuns']) {
+for (const token of ['AI_JOB', 'profileDraft', 'ENSURE_PROFILE_DRAFT', 'SAVE_PROFILE_DRAFT', 'PROBE_BOSS', 'ensureBossReceiver', 'injectBossContent', 'chrome.scripting.executeScript', 'BUILD_LOCAL_PROFILE', 'BUILD_PROFILE', 'buildLocalProfile', 'local-fallback', 'SAVE_PROFILE', 'SET_RESUME_SOURCE', 'APPROVE', 'chrome.alarms', 'TASK_PROGRESS', 'SEARCH_TASK_PROGRESS', 'RETRY_FAILED_TASK', 'taskRuns']) {
   if (!background.includes(token)) throw new Error(`background 缺少底层能力：${token}`);
 }
 const content = await readFile(`${root}/content-v37.js`, 'utf8');
@@ -99,20 +97,12 @@ for (const token of ['parseToUnicodeCMap', 'decodeWithCMap', 'expandObjectStream
 }
 
 const syntaxTargets = [
-  ...required.filter(file => file.endsWith('.js')).map(file => `${root}/${file}`),
-  '../desktop-bridge/server.js',
-  '../desktop-bridge/cli.js'
+  ...required.filter(file => file.endsWith('.js')).map(file => `${root}/${file}`)
 ];
 for (const target of syntaxTargets) {
   const result = spawnSync(process.execPath, ['--check', target], { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(`JS 语法错误 ${target}: ${result.stderr}`);
 }
-
-const bridge = await readFile('../desktop-bridge/server.js', 'utf8');
-for (const token of ['/parse-resume', 'macos-metadata', 'pdftotext', 'resume_parser.swift', '28 * 1024 * 1024', 'Access-Control-Allow-Private-Network']) {
-  if (!bridge.includes(token)) throw new Error(`桌面桥接 PDF 兜底缺少：${token}`);
-}
-await access('../desktop-bridge/resume_parser.swift');
 
 console.log(JSON.stringify({
   ok: true,
@@ -121,7 +111,7 @@ console.log(JSON.stringify({
   explicitCollapsibles: collapsibleCount,
   inputProtection: 'DIRTY_AND_FOCUS_GUARD_OK',
   profileEditor: 'EDIT_AND_SAVE_OK',
-  pdfPipeline: ['BROWSER_OBJECT_STREAMS', 'BROWSER_TOUNICODE', 'BROWSER_ACTUALTEXT', 'STREAM_FALLBACK', 'MACOS_METADATA', 'PDFTOTEXT', 'PDFKIT', 'VISION_OCR'],
+  pdfPipeline: ['BROWSER_OBJECT_STREAMS', 'BROWSER_TOUNICODE', 'BROWSER_ACTUALTEXT', 'STREAM_FALLBACK'],
   resumeSourcePersistence: 'LOCAL_SOURCE_FILE_OK',
   spacing: 'UI8_COMFORTABLE_PADDING_OK',
   pageReceiverRecovery: 'AUTO_INJECT_RETRY_AND_FRIENDLY_ERROR_OK',
