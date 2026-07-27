@@ -853,6 +853,7 @@ details[open] .chevron { margin-top: 3px; transform: rotate(225deg); }
 .resume-editor-card { overflow: visible; padding: 16px; }
 .resume-editor-card .sticky-actions { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.15fr); gap: 10px; margin-top: 0; padding-top: 14px; padding-bottom: 1px; }
 .resume-editor-card .sticky-actions .button { width: 100%; min-height: 40px; padding: 0 10px; font-size: 12px; }
+/* UI28 — profile source clarity and content-aware editors */
 .profile-editor-card textarea[data-autogrow] { box-sizing: border-box; width: 100%; overflow-y: hidden; resize: vertical; transition: height .14s ease, border-color .14s ease; }
 .profile-editor-card .profile-directions-input { min-height: 62px; padding: 11px 12px; line-height: 1.65; }
 
