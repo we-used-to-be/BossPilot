@@ -6,7 +6,7 @@
 
 从简历解析、职业画像、岗位方向选择，到岗位采集、AI 匹配排序、人工确认或自动沟通，集中在一个 Chrome 侧边栏里完成。
 
-[快速开始](#快速开始) · [功能介绍](#核心功能) · [AI 工作流程](#ai-工作流程) · [完整教程](docs/新手安装与使用.md) · [常见问题](docs/常见问题.md) · [隐私与安全](docs/隐私与安全.md)
+[功能介绍](#核心功能) · [AI 工作流程](#ai-工作流程)
 
 ![Version](https://img.shields.io/badge/version-v1.3.0-078A83)
 ![Chrome](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4)
@@ -18,8 +18,6 @@
 </div>
 
 > BossPilot 是求职者侧的效率工具，不属于 BOSS 直聘官方产品。请使用真实简历信息，遵守平台规则，不要用于骚扰、绕过验证或高频滥用。
-
-![BossPilot 使用流程](docs/images/00-quick-start.png)
 
 ---
 
@@ -115,135 +113,12 @@ BossPilot 的 AI 工作流分为 6 个核心阶段，每个阶段都经过 Token
   容错：失败分类 → 自动重试/人工介入/任务暂停
 ```
 
-## 快速开始
-
-### 1. 下载正式包
-
-进入仓库的 **Releases** 页面，下载最新完整 ZIP 并解压。
-
-> 不建议普通用户使用 GitHub 自动生成的 `Source code.zip`，因为它不一定等同于已整理好的可安装包。
-
-### 2. 加载 Chrome 扩展
-
-![安装 Chrome 扩展](docs/images/01-install-extension.png)
-
-1. 在 Chrome 地址栏打开 `chrome://extensions`
-2. 打开右上角"开发者模式"
-3. 点击"加载已解压的扩展程序"
-4. 选择解压目录中的 **`chrome-extension` 文件夹**
-5. 登录 BOSS 直聘网页并打开 BossPilot 侧边栏
-
-### 3. 完成首次配置
-
-按下面顺序完成：
-
-1. 在"设置"中填写求职条件和 AI API Key
-2. 测试 AI 连接并保存
-3. 导入简历原文
-4. 生成并检查职业画像
-5. 选择要投递的岗位方向
-6. 第一次只测试一个岗位
-
-### 4. 首次全自动会强制单条验收
-
-v1.3.0 默认启用"首次单条验收"：第一次全自动成功投递 1 个岗位后会自动暂停。请确认：
-
-- 进入的是正确 HR 会话
-- 求职文字真实出现在右侧聊天气泡
-- 附件按设置发送
-- 任务结果被正确记录
-- 投递完成后能够返回职位页继续搜索
-
-任何一步未确认，都应查看失败原因，不要连续重复点击重试。确认首条投递无误后，再次开始任务即可进入批量流程。详细规则见 [首次单条投递验收](docs/首次单条验收.md)。
-
-## 使用方式
-
-### 配置搜索条件与 AI
-
-![配置搜索条件与 AI](docs/images/02-configure-ai.png)
-
-在"设置"页选择人工确认或全自动模式，填写城市、求职类型、经验、学历、薪资条件及自己的 AI API Key。API Key 只应保存在自己的浏览器中，不要提交到仓库、Issue 或截图。
-
-### 导入简历
-
-![导入简历](docs/images/03-upload-resume.png)
-
-进入"简历 → 简历原文"上传文件。普通文本 PDF、DOCX、TXT 可直接解析；扫描版 PDF 或特殊字体 PDF 可改用粘贴正文，或通过本地桥接使用 OCR。
-
-### 生成并编辑职业画像
-
-![生成并编辑职业画像](docs/images/04-edit-profile.png)
-
-AI 结果只是初稿。请检查个人定位、技能、项目、学历、城市和薪资等信息，删除任何不准确或夸大的内容。所有字段都可以继续编辑并保存。
-
-### 自主选择投递方向
-
-![选择投递方向](docs/images/05-select-directions.png)
-
-职业画像生成后，用户可以：
-
-- 勾选或取消岗位方向
-- 修改岗位名称和搜索关键词
-- 调整投递优先级
-- 删除不想投的方向
-- 新增自定义方向
-
-系统只会为**明确勾选并保存**的方向生成新搜索任务，不会把画像中出现的所有可能岗位都自动加入投递。
-
-### 选择执行模式
-
-![选择模式并开始](docs/images/06-start-task.png)
-
-**人工确认**适合首次使用：AI 完成筛选和招呼语生成后，由用户逐条检查、修改并确认。
-
-**全自动投递**适合完成单条验证后使用：达到推荐阈值的岗位按排序执行；遇到验证码、登录异常、会话不确定或发送结果无法确认时应自动暂停。
-
-### 查看进度与失败任务
-
-![查看进度与失败任务](docs/images/07-monitor-and-retry.png)
-
-消息页会展示当前岗位、执行阶段、百分比、失败原因和重试次数。历史失败任务支持打开原岗位、重新投递、批量重试和忽略。
-
-## 配置说明
-
-### 支持的 AI 服务商
-
-| 服务商 | 配置项 `baseUrl` | 默认模型 |
-| --- | --- | --- |
-| DeepSeek | `https://api.deepseek.com` | `deepseek-chat` |
-| OpenAI 兼容 | 服务商提供的 Endpoint | 按需填写 |
-
-> 所有请求只从当前浏览器本地发出，API Key 仅保存在 `chrome.storage.local`。
-
-### 关键阈值参数
-
-| 参数 | 位置 | 默认值 | 说明 |
-| --- | --- | --- | --- |
-| `minScore` | 设置 → 任务阈值 | 70 | 达到此分数才进入自动沟通或人工确认待办 |
-| `dailyTarget` | 设置 → 任务控制 | 30 | 每天最大投递目标（软上限） |
-| `betweenJobsSeconds` | 设置 → 任务控制 | 30 | 两次投递之间的间隔秒数 |
-| `attachmentDelaySeconds` | 设置 → 任务控制 | 5 | 发送招呼语后延迟多少秒发送附件 |
-| `sendImage` | 设置 → 附件 | on | 是否随招呼语发送简历图片 |
-| `sendOnline` | 设置 → 附件 | on | 是否发送在线简历附件 |
-| `customInstruction` | 设置 → AI 自定义 | 空 | 附加到 AI 画像和招呼语 Prompt 末尾的自定义指令 |
-
-## 截图占位
-
-| 首页与任务 | 简历与画像 | 方向与搜索 | 设置与诊断 |
-| :---: | :---: | :---: | :---: |
-| ![首页](docs/images/06-start-task.png) | ![简历](docs/images/03-upload-resume.png) | ![方向](docs/images/05-select-directions.png) | ![设置](docs/images/02-configure-ai.png) |
-| 任务启动与模式切换 | 简历导入与画像生成 | 投递方向规划与搜索 | AI 配置与参数调整 |
-| ![进度](docs/images/07-monitor-and-retry.png) | ![验收](docs/images/04-edit-profile.png) | ![桥接](docs/images/08-openclaw-optional.png) | ![安装](docs/images/01-install-extension.png) |
-| 任务进度与失败重试 | 职业画像编辑与校验 | 可选本地桥接能力 | Chrome 扩展安装向导 |
-
 ## 数据与隐私
 
 - 简历、职业画像、筛选条件、API Key 和任务记录默认保存在当前浏览器本地
 - 项目不需要用户导出登录 Cookie
 - 请勿把真实简历、API Key、手机号、邮箱或完整运行日志提交到公开仓库和 Issue
 - 导出诊断信息前，应确认敏感字段已经隐藏
-
-更完整的说明见：[隐私与安全](docs/隐私与安全.md) 和 [Chrome 权限说明](docs/权限说明.md)。
 
 ## 安全边界
 
@@ -256,34 +131,6 @@ BossPilot 不应实现或用于：
 - 绕过平台规则的反检测行为
 
 出现安全验证、账号异常、页面结构无法确认或聊天对象不确定时，应立即暂停任务并由用户处理。
-
-## 常见问题
-
-### 加载扩展失败
-
-确认选择的是包含 `manifest.json` 的 `chrome-extension` 文件夹，而不是 ZIP 或项目根目录。
-
-### 更新后仍然看到旧界面
-
-点击 BossPilot "停止"，在 `chrome://extensions` 刷新扩展，关闭旧 BOSS 标签页后重新打开。
-
-### AI 连接正常，但画像生成失败
-
-"连接正常"只代表接口可访问。还需要检查模型名称、API 余额、输出是否完整以及简历正文是否过长。
-
-### PDF 识别为空或乱码
-
-优先使用 DOCX/TXT，或直接粘贴正文。扫描版 PDF 可安装本地桥接后使用 OCR。
-
-### 招呼语没有真正发出
-
-只以当前 HR 右侧聊天区出现完整文字气泡作为成功依据。输入框里有草稿、左侧列表出现预览或页面跳转，都不代表发送成功。
-
-### 外部网申岗位怎么办
-
-"立即网申""去网申"等无法通过 BOSS 聊天完成的岗位会被跳过，不计入成功或失败。
-
-更多排查方法见：[常见问题](docs/常见问题.md)。
 
 ## 项目结构
 
@@ -327,19 +174,11 @@ npm run build
 
 构建完成后，请重新进行 Manifest、JavaScript 语法、测试和解压校验，再发布安装包。
 
-维护者发布流程见：[GitHub 发布说明](docs/GitHub发布说明.md)。
-
 </details>
 
 ## 反馈与联系
 
-遇到问题时，建议先查看 [常见问题](docs/常见问题.md)，再提交 GitHub Issue。提交时请包含：
-
-- BossPilot 版本
-- Chrome 版本和操作系统
-- 出错步骤
-- 已隐藏隐私信息的截图
-- 错误页面中的完整错误信息
+遇到问题时，请通过 GitHub Issue 反馈。
 
 ## 开源协议说明
 
@@ -353,7 +192,11 @@ BossPilot 采用 [Apache License 2.0](LICENSE) 开源。本项目基于 JobClaw 
 >
 > BossPilot — https://github.com/we-used-to-be/BossPilot
 
-详细署名格式见 [ATTRIBUTION.md](ATTRIBUTION.md)，品牌使用规则见 [TRADEMARKS.md](TRADEMARKS.md)。
+详细署名格式见 [ATTRIBUTION.md](ATTRIBUTION.md)。
+
+### 品牌声明
+
+Apache License 2.0 **仅适用于本仓库的源代码**。`BossPilot` 名称、Logo 及品牌标识是项目品牌资产，二次开发者不得使用 `BossPilot` 名称或品牌元素暗示与本项目存在官方关联。详细品牌规则见 [TRADEMARKS.md](TRADEMARKS.md)。
 
 ## 免责声明
 
