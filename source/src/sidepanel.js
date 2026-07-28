@@ -1170,7 +1170,9 @@ function extractPdfTextOperators(content) {
       }
     }
   }
-  return output.join('\n');
+  // Join without newlines to avoid single-character-per-line when PDF positions
+  // each glyph individually; the main parser handles line breaks via y-position tracking.
+  return output.join('');
 }
 
 function isLikelyGarbledText(text) {
@@ -1235,8 +1237,30 @@ function readAsDataUrl(file) {
 }
 
 
+function mergeSingleCharLines(text) {
+  const lines = text.split('\n');
+  // Only apply when the pattern is clearly one-char-per-line: many single-char lines
+  const singleCharCount = lines.filter(l => l.length === 1 && /[\u3400-\u9fffA-Za-z0-9]/.test(l)).length;
+  if (lines.length < 5 || singleCharCount < lines.length * 0.5) return text;
+  // Merge consecutive single-char lines into a single line
+  const result = [];
+  let buffer = '';
+  for (const line of lines) {
+    if (line.length === 1 && line.trim()) {
+      buffer += line;
+    } else {
+      if (buffer) { result.push(buffer); buffer = ''; }
+      result.push(line);
+    }
+  }
+  if (buffer) result.push(buffer);
+  return result.join('\n');
+}
+
 function applyResumeText(text, { fileName = '简历文件', method = '本地解析' } = {}) {
-  const normalized = String(text || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const normalized = mergeSingleCharLines(
+    String(text || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  );
   if (!isReadableResumeText(normalized)) throw new Error('识别结果仍不完整');
   setFieldValue('resumeText', normalized, true);
   dirtyFields.add('resumeText');

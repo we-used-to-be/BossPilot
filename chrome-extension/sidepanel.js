@@ -1170,7 +1170,9 @@ function extractPdfTextOperators(content) {
       }
     }
   }
-  return output.join('\n');
+  // Join without newlines to avoid single-character-per-line when PDF positions
+  // each glyph individually; the main parser handles line breaks via y-position tracking.
+  return output.join('');
 }
 
 function isLikelyGarbledText(text) {
@@ -1235,8 +1237,30 @@ function readAsDataUrl(file) {
 }
 
 
+function mergeSingleCharLines(text) {
+  const lines = text.split('\n');
+  // Only apply when the pattern is clearly one-char-per-line: many single-char lines
+  const singleCharCount = lines.filter(l => l.length === 1 && /[\u3400-\u9fffA-Za-z0-9]/.test(l)).length;
+  if (lines.length < 5 || singleCharCount < lines.length * 0.5) return text;
+  // Merge consecutive single-char lines into a single line
+  const result = [];
+  let buffer = '';
+  for (const line of lines) {
+    if (line.length === 1 && line.trim()) {
+      buffer += line;
+    } else {
+      if (buffer) { result.push(buffer); buffer = ''; }
+      result.push(line);
+    }
+  }
+  if (buffer) result.push(buffer);
+  return result.join('\n');
+}
+
 function applyResumeText(text, { fileName = '简历文件', method = '本地解析' } = {}) {
-  const normalized = String(text || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const normalized = mergeSingleCharLines(
+    String(text || '').replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+  );
   if (!isReadableResumeText(normalized)) throw new Error('识别结果仍不完整');
   setFieldValue('resumeText', normalized, true);
   dirtyFields.add('resumeText');
@@ -1599,7 +1623,8 @@ async function renderAiStats() {
     setText('aiStatInput', formatTokenCount(stats.totalInputTokens || 0));
     setText('aiStatOutput', formatTokenCount(stats.totalOutputTokens || 0));
     setText('aiStatFailed', stats.failedCalls || 0);
-    setText('aiStatsSummary', `累计调用 ${stats.totalCalls || 0} 次，消耗 ${formatTokenCount(stats.totalTokens || 0)}`);
+    const retryHint = stats.totalRetries ? ` · 重试 ${stats.totalRetries} 次` : '';
+    setText('aiStatsSummary', `累计调用 ${stats.totalCalls || 0} 次，消耗 ${formatTokenCount(stats.totalTokens || 0)}${retryHint}`);
 
     // 按类型分组
     const typeLabels = { profile_generation: '画像生成', profile_generation_compact: '画像精简', job_analysis: '岗位分析', greeting: '招呼语', test_connection: '连接测试', unknown: '其他' };
@@ -1612,9 +1637,49 @@ async function renderAiStats() {
     if (detailHtml) {
       setHtml('aiStatsDetail', detailHtml);
     }
+
+    // 失败分类统计
+    const failuresByCode = stats.failuresByCode || {};
+    const failureLabels = {
+      AI_HTTP: '接口错误', AI_TIMEOUT: '超时', AI_NETWORK: '网络异常',
+      AI_INVALID_JSON: 'JSON 解析失败', AI_TRUNCATED: '输出截断', AI_EMPTY: '返回为空',
+      AI_INVALID_RESPONSE: '响应异常', AI_RETRY_EXHAUSTED: '重试耗尽', AI_CONFIG: '配置错误',
+      AI_UNKNOWN: '未知错误'
+    };
+    const failureEntries = Object.entries(failuresByCode);
+    if (failureEntries.length) {
+      let failureHtml = '<div class="ai-stats-section-title">失败分类</div>';
+      for (const [code, count] of failureEntries) {
+        failureHtml += `<div class="ai-stats-row failure-row"><span>${failureLabels[code] || code}</span><span>${count} 次</span></div>`;
+      }
+      setHtml('aiStatsFailures', failureHtml);
+      $('aiStatsFailures').hidden = false;
+    } else {
+      $('aiStatsFailures').hidden = true;
+    }
+
+    // 最近失败记录（最多 5 条）
+    const recentFailures = (stats.records || []).filter(r => !r.success).slice(0, 5);
+    if (recentFailures.length) {
+      let recentHtml = '<div class="ai-stats-section-title">最近失败</div>';
+      for (const rec of recentFailures) {
+        const time = new Date(rec.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        const typeLabel = typeLabels[rec.requestType] || rec.requestType;
+        const retryInfo = rec.retryCount ? ` (重试${rec.retryCount}次)` : '';
+        recentHtml += `<div class="ai-stats-row failure-row"><span>${time} ${typeLabel}${retryInfo}</span><span class="failure-msg">${escapeHtml(String(rec.error || '').slice(0, 80))}</span></div>`;
+      }
+      setHtml('aiStatsRecentFailures', recentHtml);
+      $('aiStatsRecentFailures').hidden = false;
+    } else {
+      $('aiStatsRecentFailures').hidden = true;
+    }
   } catch {
     // 静默失败
   }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function formatTokenCount(count) {

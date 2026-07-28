@@ -405,12 +405,17 @@ function extractTextFromContent(content, fontMaps, resourceFonts) {
   const lines = [];
   let currentLine = '';
   let currentFont = null;
+  let lastY = null;
+  let lastOp = null; // 'td' or 'tm'
+  const LINE_GAP = 2; // minimum y-difference to trigger a new line
   const pushLine = () => {
     const cleaned = currentLine.replace(/[ \t]+/g, ' ').trim();
     if (cleaned) lines.push(cleaned);
     currentLine = '';
   };
   for (const block of content.matchAll(/BT([\s\S]*?)ET/g)) {
+    lastY = null;
+    lastOp = null;
     for (const token of tokenizeTextBlock(block[1])) {
       const fontMatch = token.match(/^\/([^\s/<>\[\]()]+)\s+[-+]?\d*\.?\d+\s+Tf$/);
       if (fontMatch) {
@@ -418,8 +423,29 @@ function extractTextFromContent(content, fontMaps, resourceFonts) {
         currentFont = fontObject ? fontMaps.get(fontObject) || null : null;
         continue;
       }
-      if (/^(?:T\*|[-+]?\d*\.?\d+\s+[-+]?\d*\.?\d+\s+(?:Td|TD)|(?:[-+]?\d*\.?\d+\s+){6}Tm)$/.test(token)) {
+      // T* always moves to next line
+      if (token === 'T*') {
         pushLine();
+        lastY = null;
+        lastOp = null;
+        continue;
+      }
+      // Td/TD: tx ty Td/TD — only push line if vertical offset is significant
+      const tdMatch = token.match(/^([-+]?\d*\.?\d+)\s+([-+]?\d*\.?\d+)\s+(Td|TD)$/);
+      if (tdMatch) {
+        const ty = parseFloat(tdMatch[2]);
+        if (lastOp === 'td' && lastY !== null && Math.abs(ty) > LINE_GAP) pushLine();
+        lastY = ty;
+        lastOp = 'td';
+        continue;
+      }
+      // Tm: a b c d e f Tm — only push line if y-translation changes significantly
+      const tmMatch = token.match(/^(?:[-+]?\d*\.?\d+\s+){5}([-+]?\d*\.?\d+)\s+Tm$/);
+      if (tmMatch) {
+        const fy = parseFloat(tmMatch[1]);
+        if (lastOp === 'tm' && lastY !== null && Math.abs(fy - lastY) > LINE_GAP) pushLine();
+        lastY = fy;
+        lastOp = 'tm';
         continue;
       }
       if (token.startsWith('[')) {
