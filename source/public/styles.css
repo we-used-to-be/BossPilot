@@ -791,12 +791,16 @@ details[open] .chevron { margin-top: 3px; transform: rotate(225deg); }
 /* ── Delivery Tasks ── */
 .delivery-monitor-card { padding-bottom: 14px; }
 .delivery-monitor-title { align-items: flex-start; }
-.delivery-toolbar { align-items: flex-start; margin: -2px 0 10px; }
+.delivery-toolbar { align-items: flex-start; margin: -2px 0 10px; flex-wrap: wrap; }
 .delivery-toolbar > span { color: var(--ink-subtle); font-size: 10px; line-height: 1.45; }
 .delivery-toolbar .button { flex: 0 0 auto; min-height: 28px; padding: 0 8px; font-size: 9px; }
+.delivery-select-all { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--ink-subtle); cursor: pointer; user-select: none; }
+.delivery-select-all input { margin: 0; width: 14px; height: 14px; accent-color: var(--primary); cursor: pointer; }
 .delivery-task-list { display: grid; gap: 8px; }
 .delivery-task-empty { padding: 16px 12px; border: 1px dashed var(--hairline-strong); border-radius: var(--radius-md); color: var(--ink-subtle); font-size: 10px; line-height: 1.55; text-align: center; }
-.delivery-task { padding: 12px; border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--surface-2); }
+.delivery-task { display: grid; grid-template-columns: auto 1fr; gap: 0 10px; align-items: start; padding: 12px; border: 1px solid var(--hairline); border-radius: var(--radius-lg); background: var(--surface-2); min-width: 0; overflow: hidden; }
+.delivery-task-check { flex: 0 0 auto; margin: 0; width: 14px; height: 14px; accent-color: var(--primary); cursor: pointer; }
+.delivery-task > :not(.delivery-task-check) { grid-column: 2; }
 .delivery-task.is-running { border-color: rgba(86, 69, 212, .2); background: rgba(86, 69, 212, .04); }
 .delivery-task.is-failed { border-color: rgba(224, 49, 49, .2); background: rgba(224, 49, 49, .04); }
 .delivery-task.is-success { border-color: rgba(26, 174, 57, .15); background: rgba(26, 174, 57, .04); }

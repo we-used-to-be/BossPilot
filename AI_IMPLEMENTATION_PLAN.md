@@ -2,31 +2,51 @@
 
 ## 当前状态
 
-- 当前阶段：阶段 1｜AI Token 优化闭环
-- 阶段状态：已完成
+- 当前阶段：阶段 2｜有界岗位分析流水线
+- 阶段状态：未开始
 - 上次执行结果：
-  - 岗位匹配已移除完整简历和招呼语生成，只返回六个约定字段
-  - 已增加 `profileFacts`/`resumeHash` 缓存及简历变更失效逻辑
-  - 招呼语已延迟到人工确认、批量确认、自动投递或失败重试前生成
-  - 设置页已增加兼容 `customInstruction`/`customPrompt` 的自定义要求
+  - 岗位匹配输入已收窄为标题、公司、薪资、地点和最多 3600 字符 JD
+  - 平衡/精准模式岗位匹配输出上限已降至 900 token，节省模式保持 400
+  - 新增 UI39 输入与输出边界回归，并精确同步三份后台脚本
 - 验证结果：
+  - `node tests/ui39-job-analysis-performance.mjs`：通过
   - `node tests/ui38-ai-token-flow.mjs`：通过
-  - 5 项投递/安全定向回归：通过
-  - `npm run check:syntax`：通过
-  - `npm run test:unit`：通过
-  - `npm run build`：通过
-  - `npm run test:regression`：任务相关用例通过；额外全量回归被旧 UI28 CSS 标记缺失中断
-- 本阶段剩余：无
+  - `npm run check:syntax`、`npm run test:unit`：通过
+  - UI18/UI20/UI24/UI30 投递安全定向回归：通过
+  - UI9：失败，现有 `source/public/sidepanel.html` 执行模式入口数量不符合旧测试，与本阶段后台改动无关
+  - 三份 `background.js` 语法、`git diff --check`：通过
+  - `npm run build`：未执行；构建脚本会删除并重建已有用户修改的 `source/dist/`
+- 本阶段剩余：
+  - 先用测试证明当前岗位详情与 AI 完全串行
+  - 设计最多 2 路 AI、单路 DOM 的有界流水线
+  - 验证自动排序、外部网申跳过、暂停与投递安全
 - 本阶段允许修改：
-  - `source/src/common.js`
-  - `source/src/background.js`
-  - `source/src/sidepanel.js`
-  - `source/public/sidepanel.html`
-  - `source/public/styles.css`
+  - `source/src/content-v37.js`
   - `source/tests/**`
-  - `chrome-extension/` 对应构建产物
+  - `chrome-extension/content-v37.js`
+  - `source/dist/chrome-extension/content-v37.js`
 - 阻塞问题：无
-- 下一阶段：无（项目目标已完成）
+- 下一阶段：阶段 3｜持久化与 PDF 响应优化
+
+## 当前优化目标
+
+提升批量岗位解析吞吐量，同时保持会话绑定、发送确认、附件顺序、外部网申跳过和反误投逻辑不变。
+
+### 阶段 1｜岗位分析输入与输出边界
+
+- 只向岗位匹配模型发送评分必需字段，限制 JD 正文长度。
+- 平衡/精准模式的岗位匹配输出上限不超过 900 token。
+- 保留现有六字段匹配结果和 AI 耗时记录。
+
+### 阶段 2｜有界岗位分析流水线
+
+- 在不并发操作 BOSS DOM 的前提下，将已提取岗位交给最多 2 路 AI 分析。
+- 保持队列排序、自动投递和安全暂停语义。
+
+### 阶段 3｜持久化与 PDF 响应优化
+
+- 合并非关键进度写入并限制岗位缓存增长。
+- 根据真实 PDF 基线决定是否将深度解析迁移到 Worker。
 
 ## 项目目标
 
@@ -239,6 +259,13 @@ npm run test:unit
 - 不提前实现后续阶段
 
 ## 阶段历史
+
+### 阶段 1｜岗位分析输入与输出边界
+
+- 状态：已完成
+- 完成内容：精简岗位匹配输入并限制 JD 为 3600 字符；岗位匹配输出限制为节省模式 400、其他模式 900 token；新增 UI39 性能边界契约。
+- 验证结果：UI39、UI38、语法、单元测试和 4 项投递安全定向回归通过；UI9 为现有页面与旧契约不一致；构建因保护已有 `source/dist/` 修改未执行，三份后台文件已精确同步并通过语法检查。
+- 遗留问题：真实模型延迟需在扩展实际运行后通过 `aiStats.records.durationMs` 对比；未宣称未测量的提速比例。
 
 ### 阶段 1｜移除 OpenClaw 相关内容
 

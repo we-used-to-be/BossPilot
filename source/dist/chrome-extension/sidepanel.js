@@ -7,7 +7,7 @@ const PROFILE_FORM_IDS = [
   'profileSalaryInput', 'profileExcludeInput'
 ];
 const SETTINGS_FORM_IDS = [
-  'locations', 'types', 'experience', 'degree', 'salary', 'minScore',
+  'minScore',
   'dailyTarget', 'betweenJobsSeconds', 'attachmentDelaySeconds', 'sendImage', 'sendOnline',
   'baseUrl', 'modelName', 'apiKey', 'customInstruction', 'aiMode'
 ];
@@ -388,9 +388,6 @@ function updateUnsavedIndicators() {
     setText('profileEditState', '修改已自动保留 · 待应用');
     $('profileEditState')?.classList.add('accent');
   }
-
-  const saveButton = $('saveSettings');
-  if (saveButton) saveButton.textContent = settingsDirty ? '保存修改' : '保存设置';
 }
 
 function formatTime(timestamp) {
@@ -496,13 +493,16 @@ function renderSearchTasks(tasks = []) {
   container.replaceChildren();
   const completed = tasks.filter(task => task.status === 'completed').length;
   setText('searchTaskSummary', `${completed} / ${tasks.length}`);
+  const abandonBtn = $('abandonAllTasks');
   if (!tasks.length) {
     const empty = document.createElement('div');
     empty.className = 'queue-empty';
     empty.textContent = '启动任务后，这里会逐条显示每个搜索关键词和地区任务的进度。';
     container.append(empty);
+    if (abandonBtn) abandonBtn.hidden = true;
     return;
   }
+  if (abandonBtn) abandonBtn.hidden = false;
   const workflow = state.workflow || {};
   for (const [index, task] of tasks.entries()) {
     const effectiveStatus = workflow.paused && index === Number(workflow.taskIndex || 0) && task.status === 'running' ? 'paused' : (task.status || 'pending');
@@ -539,6 +539,12 @@ function renderSearchTasks(tasks = []) {
 function createDeliveryTask(run) {
   const card = document.createElement('article');
   card.className = `delivery-task is-${run.status || 'pending'}`;
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'delivery-task-check';
+  check.dataset.runId = run.id;
+  check.setAttribute('aria-label', `选择任务 ${run.job?.title || run.id}`);
+  card.append(check);
   const head = document.createElement('div');
   head.className = 'delivery-task-head';
   const title = document.createElement('div');
@@ -662,9 +668,60 @@ function renderDeliveryTasks(runs = []) {
     empty.className = 'delivery-task-empty';
     empty.textContent = '暂无投递任务。开始采集后，每个岗位都会显示“读取详情 → AI 分析 → 等待确认/自动投递 → 发送结果”的独立进度条。';
     container.append(empty);
+    const selAll = $('deliverySelectAllLabel');
+    const batchDel = $('batchDeleteTasks');
+    if (selAll) selAll.hidden = true;
+    if (batchDel) batchDel.hidden = true;
     return;
   }
   for (const run of list) container.append(createDeliveryTask(run));
+
+  // 全选 / 批量删除逻辑
+  const selAllLabel = $('deliverySelectAllLabel');
+  const selAll = $('deliverySelectAll');
+  const batchDel = $('batchDeleteTasks');
+  if (selAllLabel) selAllLabel.hidden = false;
+  if (batchDel) batchDel.hidden = true;
+
+  const allChecks = () => container.querySelectorAll('.delivery-task-check');
+  const updateBatchUI = () => {
+    const checks = allChecks();
+    const checked = [...checks].filter(c => c.checked);
+    const allChecked = checks.length > 0 && checked.length === checks.length;
+    if (selAll) selAll.checked = allChecked;
+    if (selAll) selAll.indeterminate = checked.length > 0 && !allChecked;
+    if (batchDel) batchDel.hidden = checked.length === 0;
+  };
+
+  if (selAll) {
+    selAll.onchange = () => {
+      allChecks().forEach(c => { c.checked = selAll.checked; });
+      updateBatchUI();
+    };
+  }
+
+  container.addEventListener('change', (e) => {
+    if (e.target.classList.contains('delivery-task-check')) updateBatchUI();
+  });
+
+  if (batchDel) {
+    batchDel.onclick = async () => {
+      const checked = [...allChecks()].filter(c => c.checked);
+      if (!checked.length) return;
+      const count = checked.length;
+      batchDel.disabled = true;
+      batchDel.textContent = '删除中 (' + count + ')…';
+      let ok = 0;
+      for (const c of checked) {
+        const result = await send('DELETE_TASK_RUN', { runId: c.dataset.runId });
+        if (result.ok) ok++;
+      }
+      batchDel.disabled = false;
+      batchDel.textContent = '批量删除';
+      showToast('已删除 ' + ok + '/' + count + ' 个任务');
+      await refresh({ forms: false });
+    };
+  }
 }
 
 function createQueueItem(item) {
@@ -881,6 +938,20 @@ function setReadiness(id, ready) {
   icon.textContent = ready ? '✓' : step;
 }
 
+function readinessCount() {
+  const config = state.config || {};
+  const resumeReady = Boolean(String(state.resumeText || '').trim());
+  const draft = effectiveProfileDraft();
+  const profileGenerated = profileDraftReady(draft);
+  const plan = state.directionPlan || {};
+  const enabledDirections = selectedDirectionItems(plan).length;
+  const profileReady = Boolean(profileGenerated && plan.confirmed && enabledDirections);
+  const settingsReady = Boolean(config.model?.apiKey);
+  const validationRequired = config.requireSingleJobValidation !== false;
+  const validationReady = !validationRequired || Number(config.singleJobValidationCompletedAt || 0) > 0;
+  return [resumeReady, profileReady, settingsReady, validationReady].filter(Boolean).length;
+}
+
 function renderReadiness() {
   const config = state.config || {};
   const resumeReady = Boolean(String(state.resumeText || '').trim());
@@ -985,6 +1056,22 @@ function renderDynamic() {
   $('pauseTask').disabled = !workflow.running || workflow.paused;
   $('stopTask').disabled = !workflow.running && workflow.phase === 'idle';
 
+  // 就绪状态绑定开始按钮
+  const allReady = readinessCount() === 4;
+  const startLabel = $('startTask').querySelector('span');
+  if (!running && !paused) {
+    if (allReady) {
+      if (startLabel) startLabel.textContent = '开始采集';
+      $('startTask').classList.remove('is-not-ready');
+    } else {
+      if (startLabel) startLabel.textContent = '填写必要信息';
+      $('startTask').classList.add('is-not-ready');
+    }
+  } else {
+    if (startLabel) startLabel.textContent = '开始采集';
+    $('startTask').classList.remove('is-not-ready');
+  }
+
   if (!dirtyFields.has('resumeText')) {
     setText('resumeStatePill', state.resumeText ? `已保存 ${state.resumeText.length} 字` : '未保存');
     $('resumeStatePill')?.classList.remove('accent');
@@ -1033,11 +1120,6 @@ function renderForms(force = false) {
   setFieldValue('profileExcludeInput', names(draft.excludeDirections).join('，'), force);
   autoGrowProfileFields();
 
-  setFieldValue('locations', (config.targetLocations || []).join('，'), force);
-  setFieldValue('types', (config.employmentTypes || []).join('，'), force);
-  setFieldValue('experience', (config.experiences || []).join('，'), force);
-  setFieldValue('degree', (config.degrees || []).join('，'), force);
-  setFieldValue('salary', config.salary || '不限', force);
   setFieldValue('minScore', config.minScore ?? 75, force);
   setFieldValue('dailyTarget', config.dailyTarget ?? 150, force);
   setFieldValue('betweenJobsSeconds', config.betweenJobsSeconds ?? 12, force);
@@ -1435,17 +1517,18 @@ async function saveProfile() {
   if (!profile.primaryDirections.length) return showToast('至少填写一个主要求职方向', true);
   if (!profile.searchKeywords.length) return showToast('至少填写一个岗位搜索词', true);
   const button = $('saveProfile');
-  setBusy(button, true, '正在保存…', '保存职业画像');
+  setBusy(button, true, '正在保存…', '保存并重新生成岗位方向');
   try {
     const result = await send('SAVE_PROFILE', { profile });
     if (!result.ok) throw new Error(result.error || '画像保存失败');
     clearDirty(PROFILE_FORM_IDS);
     await refresh({ forms: true, forceForms: true });
-    showToast(result.directionPlan?.confirmed ? '职业画像已保存，当前投递方向继续有效' : '职业画像已保存；请在下方选择要投递的岗位方向');
+    const selectedCount = result.directionPlan?.items?.filter(i => i.enabled).length || 0;
+    showToast(`职业画像已保存，已重新生成 ${selectedCount} 个岗位方向，请勾选后应用`);
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    setBusy(button, false, '', '保存职业画像');
+    setBusy(button, false, '', '保存并重新生成岗位方向');
   }
 }
 
@@ -1559,11 +1642,6 @@ async function saveSettings() {
     minScore: Number($('minScore').value || 75),
     betweenJobsSeconds: Math.max(3, Math.min(30, Number($('betweenJobsSeconds').value || 12))),
     attachmentDelaySeconds: Math.max(1, Math.min(10, Number($('attachmentDelaySeconds').value || 4))),
-    targetLocations: csv($('locations').value),
-    employmentTypes: csv($('types').value),
-    experiences: csv($('experience').value),
-    degrees: csv($('degree').value),
-    salary: $('salary').value.trim() || '不限',
     sendResumeImage: $('sendImage').checked,
     sendOnlineResume: $('sendOnline').checked,
     customInstruction: $('customInstruction').value.trim(),
@@ -1597,12 +1675,16 @@ function getAiModeValue() {
   return active?.dataset.aiMode || 'balanced';
 }
 
+function getAiModeLabel(mode) {
+  const labels = { economy: '节省模式', balanced: '平衡模式', precise: '精准模式' };
+  return labels[mode] || '平衡模式';
+}
+
 function updateAiModeButtons(mode = 'balanced') {
   for (const button of document.querySelectorAll('[data-ai-mode]')) {
     button.classList.toggle('is-active', button.dataset.aiMode === mode);
   }
-  const labels = { economy: '节省模式', balanced: '平衡模式', precise: '精准模式' };
-  setText('aiModePill', labels[mode] || '平衡模式');
+  setText('aiModePill', getAiModeLabel(mode));
 }
 
 async function setAiMode(mode) {
@@ -1610,8 +1692,16 @@ async function setAiMode(mode) {
   const old = state.config || {};
   if ((old.aiMode || 'balanced') === mode) return;
   updateAiModeButtons(mode);
-  dirtyFields.add('aiMode');
-  updateUnsavedIndicators();
+  // 立即保存，避免被 4 秒定时刷新覆盖
+  const result = await send('SAVE_CONFIG', { config: { ...old, aiMode: mode } });
+  if (result.ok) {
+    state.config = { ...old, aiMode: mode };
+    clearDirty('aiMode');
+    showToast(`AI 质量模式已切换为${getAiModeLabel(mode)}`);
+  } else {
+    showToast(result.error || '模式切换失败', true);
+    updateAiModeButtons(old.aiMode || 'balanced');
+  }
 }
 
 async function renderAiStats() {
@@ -1710,6 +1800,13 @@ function bindActions() {
     }
   });
   $('startTask').addEventListener('click', async () => {
+    const allReady = readinessCount() === 4;
+    if (!allReady) {
+      showToast('请先完成下方启动检查中的必要信息');
+      const card = $('readinessCard');
+      if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
     const button = $('startTask');
     const label = button.querySelector('span');
     button.disabled = true;
@@ -1738,6 +1835,20 @@ function bindActions() {
   $('stopTask').addEventListener('click', async () => {
     const result = await send('STOP');
     showToast(result.ok ? '任务已停止' : result.error, !result.ok);
+    await refresh({ forms: false });
+  });
+  $('abandonAllTasks').addEventListener('click', async () => {
+    const btn = $('abandonAllTasks');
+    btn.disabled = true;
+    btn.textContent = '正在丢弃…';
+    const result = await send('ABANDON_ALL');
+    if (result.ok) {
+      showToast('所有任务已丢弃，可重新开始');
+    } else {
+      showToast(result.error || '操作失败', true);
+    }
+    btn.disabled = false;
+    btn.textContent = '丢弃所有，重新开始';
     await refresh({ forms: false });
   });
 
@@ -1880,7 +1991,8 @@ function bindActions() {
     await refresh({ forms: false });
   });
 
-  $('saveSettings').addEventListener('click', saveSettings);
+  $('saveSearchSettings')?.addEventListener('click', saveSettings);
+  $('saveAiSettings')?.addEventListener('click', saveSettings);
   $('testAi').addEventListener('click', async () => {
     await saveSettings();
     setText('aiTestResult', '测试中…');

@@ -115,27 +115,6 @@ function markDirectionPlanDirty() {
   if (directionPlanDraft) directionPlanDraft.confirmed = false;
   setText('directionPlanPill', '修改未保存');
   $('directionPlanPill')?.classList.add('accent');
-  updateDirectionPlanSummary();
-}
-
-function updateDirectionPlanSummary() {
-  const plan = effectiveDirectionPlan();
-  const items = Array.isArray(plan?.items) ? plan.items : [];
-  const selected = selectedDirectionItems(plan);
-  const keywordCount = new Set(selected.flatMap(item => names(item.keywords))).size;
-  const summary = $('directionPlanSummary');
-  if (!summary) return;
-  if (!items.length) {
-    summary.textContent = '尚未生成岗位方向推荐';
-    summary.classList.remove('is-ready');
-    return;
-  }
-  summary.textContent = selected.length
-    ? `已选择 ${selected.length} 个方向 · ${keywordCount} 个搜索词${plan?.confirmed && !directionPlanDirty ? ' · 已应用' : ' · 待保存'}`
-    : '至少勾选一个要投递的岗位方向';
-  summary.classList.toggle('is-ready', Boolean(selected.length && plan?.confirmed && !directionPlanDirty));
-  setText('directionPlanPill', plan?.confirmed && !directionPlanDirty ? `已选 ${selected.length}` : `待确认 ${selected.length}`);
-  $('directionPlanPill')?.classList.toggle('accent', !plan?.confirmed || directionPlanDirty);
 }
 
 function createDirectionTags(values, tone = '') {
@@ -155,7 +134,6 @@ function renderDirectionPlan(force = false, preserveDraft = false) {
   const card = $('directionPlanCard');
   if (!list || !empty || !card) return;
   if (!force && directionPlanDirty) {
-    updateDirectionPlanSummary();
     return;
   }
 
@@ -173,7 +151,6 @@ function renderDirectionPlan(force = false, preserveDraft = false) {
     setText('directionPlanCaption', profileDraftReady()
       ? '点击“重新生成推荐”，系统会根据职业画像给出岗位方向。'
       : '先生成职业画像，再选择具体要投递的岗位。');
-    updateDirectionPlanSummary();
     return;
   }
 
@@ -251,11 +228,18 @@ function renderDirectionPlan(force = false, preserveDraft = false) {
     const source = document.createElement('span');
     source.className = 'direction-source';
     source.textContent = item.custom || item.source === 'custom' ? '自定义方向' : '画像推荐';
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'direction-remove';
-    remove.textContent = '删除';
-    footer.append(priorityLabel, source, remove);
+    const actions = document.createElement('div');
+    actions.className = 'direction-item-actions';
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'button button-primary direction-save-btn';
+    saveBtn.textContent = '保存';
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'button button-ghost danger direction-del-btn';
+    delBtn.textContent = '删除';
+    actions.append(saveBtn, delBtn);
+    footer.append(priorityLabel, source, actions);
 
     checkbox.addEventListener('change', () => {
       directionPlanDraft.items[index].enabled = checkbox.checked;
@@ -274,11 +258,26 @@ function renderDirectionPlan(force = false, preserveDraft = false) {
       directionPlanDraft.items[index].priority = Math.max(1, Math.min(99, Number(priorityInput.value || index + 1)));
       markDirectionPlanDirty();
     });
-    remove.addEventListener('click', () => {
-      directionPlanDraft.items = directionPlanDraft.items.filter(entry => entry.id !== item.id);
-      directionPlanDirty = true;
-      renderDirectionPlan(true, true);
-      markDirectionPlanDirty();
+    saveBtn.addEventListener('click', async () => {
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中…';
+      try {
+        await saveSingleDirection(item.id);
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+      }
+    });
+    delBtn.addEventListener('click', async () => {
+      delBtn.disabled = true;
+      try {
+        directionPlanDraft.items = directionPlanDraft.items.filter(entry => entry.id !== item.id);
+        directionPlanDirty = true;
+        await persistDirectionPlanNow();
+        renderDirectionPlan(true, true);
+      } finally {
+        delBtn.disabled = false;
+      }
     });
 
     row.append(header, reason);
@@ -286,10 +285,8 @@ function renderDirectionPlan(force = false, preserveDraft = false) {
     row.append(keywordsField, footer);
     list.append(row);
   }
-  setText('directionPlanCaption', state.workflow?.running
-    ? '当前任务继续使用启动时的方向；保存后的修改会应用到下一轮新任务。'
-    : '系统默认勾选匹配度最高的 3 个方向，你可以修改名称、搜索词和优先级。');
-  updateDirectionPlanSummary();
+  setText('directionPlanPill', directionPlanDraft?.confirmed ? `已保存 ${items.length}` : `待保存 ${items.length}`);
+  $('directionPlanPill')?.classList.toggle('accent', !directionPlanDraft?.confirmed);
 }
 
 async function persistProfileDraftNow() {
@@ -375,7 +372,6 @@ function hasDirty(ids) {
 function updateUnsavedIndicators() {
   const resumeDirty = dirtyFields.has('resumeText');
   const profileDirty = hasDirty(PROFILE_FORM_IDS);
-  const settingsDirty = hasDirty(SETTINGS_FORM_IDS);
 
   if (resumeDirty) {
     setText('resumeStatePill', '原文未保存');
@@ -388,9 +384,6 @@ function updateUnsavedIndicators() {
     setText('profileEditState', '修改已自动保留 · 待应用');
     $('profileEditState')?.classList.add('accent');
   }
-
-  const saveButton = $('saveSettings');
-  if (saveButton) saveButton.textContent = settingsDirty ? '保存修改' : '保存设置';
 }
 
 function formatTime(timestamp) {
@@ -496,13 +489,16 @@ function renderSearchTasks(tasks = []) {
   container.replaceChildren();
   const completed = tasks.filter(task => task.status === 'completed').length;
   setText('searchTaskSummary', `${completed} / ${tasks.length}`);
+  const abandonBtn = $('abandonAllTasks');
   if (!tasks.length) {
     const empty = document.createElement('div');
     empty.className = 'queue-empty';
     empty.textContent = '启动任务后，这里会逐条显示每个搜索关键词和地区任务的进度。';
     container.append(empty);
+    if (abandonBtn) abandonBtn.hidden = true;
     return;
   }
+  if (abandonBtn) abandonBtn.hidden = false;
   const workflow = state.workflow || {};
   for (const [index, task] of tasks.entries()) {
     const effectiveStatus = workflow.paused && index === Number(workflow.taskIndex || 0) && task.status === 'running' ? 'paused' : (task.status || 'pending');
@@ -539,6 +535,12 @@ function renderSearchTasks(tasks = []) {
 function createDeliveryTask(run) {
   const card = document.createElement('article');
   card.className = `delivery-task is-${run.status || 'pending'}`;
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.className = 'delivery-task-check';
+  check.dataset.runId = run.id;
+  check.setAttribute('aria-label', `选择任务 ${run.job?.title || run.id}`);
+  card.append(check);
   const head = document.createElement('div');
   head.className = 'delivery-task-head';
   const title = document.createElement('div');
@@ -579,7 +581,8 @@ function createDeliveryTask(run) {
 
   const hasOpen = /^https:\/\/(?:www|app)\.zhipin\.com\//i.test(String(run.job?.url || ''));
   const retryable = run.status === 'failed' && run.retryable !== false;
-  if (hasOpen || retryable || run.status === 'failed') {
+  const isTerminal = ['success', 'completed', 'failed', 'skipped', 'ignored'].includes(run.status);
+  if (hasOpen || retryable || run.status === 'failed' || isTerminal) {
     const actions = document.createElement('div');
     actions.className = 'delivery-task-actions';
     if (hasOpen) {
@@ -626,6 +629,24 @@ function createDeliveryTask(run) {
       });
       actions.append(retry);
     }
+    const del = document.createElement('button');
+    del.className = 'button button-ghost danger delivery-del-btn';
+    del.type = 'button';
+    del.textContent = '删除';
+    del.addEventListener('click', async () => {
+      del.disabled = true;
+      del.textContent = '删除中…';
+      const result = await send('DELETE_TASK_RUN', { runId: run.id });
+      if (!result.ok) {
+        del.disabled = false;
+        del.textContent = '删除';
+        showToast(result.error || '删除失败', true);
+        return;
+      }
+      showToast('投递任务已删除');
+      await refresh({ forms: false });
+    });
+    actions.append(del);
     card.append(actions);
   }
   return card;
@@ -662,9 +683,60 @@ function renderDeliveryTasks(runs = []) {
     empty.className = 'delivery-task-empty';
     empty.textContent = '暂无投递任务。开始采集后，每个岗位都会显示“读取详情 → AI 分析 → 等待确认/自动投递 → 发送结果”的独立进度条。';
     container.append(empty);
+    const selAll = $('deliverySelectAllLabel');
+    const batchDel = $('batchDeleteTasks');
+    if (selAll) selAll.hidden = true;
+    if (batchDel) batchDel.hidden = true;
     return;
   }
   for (const run of list) container.append(createDeliveryTask(run));
+
+  // 全选 / 批量删除逻辑
+  const selAllLabel = $('deliverySelectAllLabel');
+  const selAll = $('deliverySelectAll');
+  const batchDel = $('batchDeleteTasks');
+  if (selAllLabel) selAllLabel.hidden = false;
+  if (batchDel) batchDel.hidden = true;
+
+  const allChecks = () => container.querySelectorAll('.delivery-task-check');
+  const updateBatchUI = () => {
+    const checks = allChecks();
+    const checked = [...checks].filter(c => c.checked);
+    const allChecked = checks.length > 0 && checked.length === checks.length;
+    if (selAll) selAll.checked = allChecked;
+    if (selAll) selAll.indeterminate = checked.length > 0 && !allChecked;
+    if (batchDel) batchDel.hidden = checked.length === 0;
+  };
+
+  if (selAll) {
+    selAll.onchange = () => {
+      allChecks().forEach(c => { c.checked = selAll.checked; });
+      updateBatchUI();
+    };
+  }
+
+  container.addEventListener('change', (e) => {
+    if (e.target.classList.contains('delivery-task-check')) updateBatchUI();
+  });
+
+  if (batchDel) {
+    batchDel.onclick = async () => {
+      const checked = [...allChecks()].filter(c => c.checked);
+      if (!checked.length) return;
+      const count = checked.length;
+      batchDel.disabled = true;
+      batchDel.textContent = '删除中 (' + count + ')…';
+      let ok = 0;
+      for (const c of checked) {
+        const result = await send('DELETE_TASK_RUN', { runId: c.dataset.runId });
+        if (result.ok) ok++;
+      }
+      batchDel.disabled = false;
+      batchDel.textContent = '批量删除';
+      showToast('已删除 ' + ok + '/' + count + ' 个任务');
+      await refresh({ forms: false });
+    };
+  }
 }
 
 function createQueueItem(item) {
@@ -1522,29 +1594,33 @@ async function rebuildDirectionPlan() {
   }
 }
 
-async function saveDirectionPlan() {
-  if (!directionPlanDraft?.items?.length) return showToast('请先生成或添加岗位方向', true);
-  const enabled = directionPlanDraft.items.filter(item => item.enabled);
-  if (!enabled.length) return showToast('至少勾选一个要投递的岗位方向', true);
-  for (const item of enabled) {
-    if (!String(item.name || '').trim()) return showToast('已勾选方向必须填写岗位名称', true);
-    if (!names(item.keywords).length) return showToast(`请为“${item.name || '当前方向'}”填写至少一个搜索词`, true);
+async function persistDirectionPlanNow() {
+  if (!directionPlanDraft) return;
+  directionPlanDraft.updatedAt = Date.now();
+  try {
+    await chrome.storage.local.set({ directionPlan: directionPlanDraft });
+  } catch {
+    await send('SAVE_DIRECTION_PLAN', { directionPlan: directionPlanDraft });
   }
-  const button = $('saveDirectionPlan');
-  setBusy(button, true, '正在应用…', '保存并应用到新搜索任务');
+}
+
+async function saveSingleDirection(directionId) {
+  if (!directionPlanDraft?.items?.length) return showToast('请先生成或添加岗位方向', true);
+  const index = directionPlanDraft.items.findIndex(item => item.id === directionId);
+  if (index < 0) return showToast('岗位方向不存在', true);
+  const item = directionPlanDraft.items[index];
+  if (!String(item.name || '').trim()) return showToast('请填写岗位方向名称', true);
+  if (!names(item.keywords).length) return showToast('请为"' + (item.name || '当前方向') + '"填写至少一个搜索词', true);
+
   try {
     const result = await send('SAVE_DIRECTION_PLAN', { directionPlan: directionPlanDraft });
     if (!result.ok) throw new Error(result.error || '岗位方向保存失败');
     directionPlanDirty = false;
     directionPlanDraft = null;
     await refresh({ forms: true, forceForms: true });
-    showToast(result.appliesNextRun
-      ? `已保存 ${result.selectedCount} 个方向，将从下一轮任务起应用`
-      : `已保存 ${result.selectedCount} 个方向，将生成 ${result.taskCount} 个搜索任务`);
+    showToast('岗位方向已保存并重新排序');
   } catch (error) {
     showToast(error.message, true);
-  } finally {
-    setBusy(button, false, '', '保存并应用到新搜索任务');
   }
 }
 
@@ -1559,11 +1635,6 @@ async function saveSettings() {
     minScore: Number($('minScore').value || 75),
     betweenJobsSeconds: Math.max(3, Math.min(30, Number($('betweenJobsSeconds').value || 12))),
     attachmentDelaySeconds: Math.max(1, Math.min(10, Number($('attachmentDelaySeconds').value || 4))),
-    targetLocations: csv($('locations').value),
-    employmentTypes: csv($('types').value),
-    experiences: csv($('experience').value),
-    degrees: csv($('degree').value),
-    salary: $('salary').value.trim() || '不限',
     sendResumeImage: $('sendImage').checked,
     sendOnlineResume: $('sendOnline').checked,
     customInstruction: $('customInstruction').value.trim(),
@@ -1740,6 +1811,20 @@ function bindActions() {
     showToast(result.ok ? '任务已停止' : result.error, !result.ok);
     await refresh({ forms: false });
   });
+  $('abandonAllTasks').addEventListener('click', async () => {
+    const btn = $('abandonAllTasks');
+    btn.disabled = true;
+    btn.textContent = '正在丢弃…';
+    const result = await send('ABANDON_ALL');
+    if (result.ok) {
+      showToast('所有任务已丢弃，可重新开始');
+    } else {
+      showToast(result.error || '操作失败', true);
+    }
+    btn.disabled = false;
+    btn.textContent = '丢弃所有，重新开始';
+    await refresh({ forms: false });
+  });
 
   $('approveAllPending').addEventListener('click', async () => {
     const button = $('approveAllPending');
@@ -1864,7 +1949,6 @@ function bindActions() {
   $('regenerateProfile').addEventListener('click', regenerateProfile);
   $('addCustomDirection').addEventListener('click', addCustomDirection);
   $('rebuildDirectionPlan').addEventListener('click', rebuildDirectionPlan);
-  $('saveDirectionPlan').addEventListener('click', saveDirectionPlan);
 
   $('resumeImage').addEventListener('change', async event => {
     const file = event.target.files?.[0];
@@ -1880,7 +1964,8 @@ function bindActions() {
     await refresh({ forms: false });
   });
 
-  $('saveSettings').addEventListener('click', saveSettings);
+  $('saveSearchSettings')?.addEventListener('click', saveSettings);
+  $('saveAiSettings')?.addEventListener('click', saveSettings);
   $('testAi').addEventListener('click', async () => {
     await saveSettings();
     setText('aiTestResult', '测试中…');

@@ -97,6 +97,7 @@
             </div>
             <div class="search-task-heading"><span><b>搜索任务进度</b></span><strong id="searchTaskSummary">0 / 0</strong></div>
             <div class="search-task-list" id="searchTaskList"></div>
+            <button class="button button-ghost danger full-width" id="abandonAllTasks" type="button" hidden>丢弃所有，重新开始</button>
           </div>
         </details>
 
@@ -247,18 +248,6 @@
           <div><strong id="messageNoticeTitle">人工确认后再投递</strong><p id="messageNoticeText">你可以修改求职招呼语，确认后 BossPilot 才会以应聘者身份联系招聘方。</p></div>
         </div>
 
-        <article class="module-card delivery-monitor-card">
-          <div class="module-title delivery-monitor-title">
-            <div><b>投递任务进度</b><small>投递步骤与结果</small></div>
-            <span class="pill accent" id="deliveryTaskPill">0 个任务</span>
-          </div>
-          <div class="delivery-toolbar" id="deliveryToolbar">
-            <span id="deliverySummary">暂无正在处理的投递任务</span>
-            <button class="button button-secondary small" id="retryAllFailedTasks" type="button" hidden>全部重试失败任务</button>
-          </div>
-          <div class="delivery-task-list" id="deliveryTaskList"></div>
-        </article>
-
         <details class="module-card collapsible" data-collapsible="pending-jobs" open>
           <summary>
             <span><b id="pendingSectionTitle">待确认岗位</b><small id="pendingSectionSubtitle">按 AI 匹配分从高到低排列</small></span>
@@ -266,6 +255,20 @@
           </summary>
           <div class="module-body"><div class="queue-batch-actions" id="queueBatchActions"><button class="button button-secondary" id="rejectAllPending" type="button">全部忽略</button><button class="button button-primary" id="approveAllPending" type="button">批量确认投递</button></div><div class="queue-list" id="pendingList"></div></div>
         </details>
+
+        <article class="module-card delivery-monitor-card">
+          <div class="module-title delivery-monitor-title">
+            <div><b>投递任务进度</b><small>投递步骤与结果</small></div>
+            <span class="pill accent" id="deliveryTaskPill">0 个任务</span>
+          </div>
+          <div class="delivery-toolbar" id="deliveryToolbar">
+            <span id="deliverySummary">暂无正在处理的投递任务</span>
+            <label class="delivery-select-all" id="deliverySelectAllLabel" hidden><input type="checkbox" id="deliverySelectAll"> 全选</label>
+            <button class="button button-ghost danger small" id="batchDeleteTasks" type="button" hidden>批量删除</button>
+            <button class="button button-secondary small" id="retryAllFailedTasks" type="button" hidden>全部重试失败任务</button>
+          </div>
+          <div class="delivery-task-list" id="deliveryTaskList"></div>
+        </article>
 
         <details class="module-card collapsible" data-collapsible="all-events">
           <summary>

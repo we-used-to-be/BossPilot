@@ -28,14 +28,6 @@
             </div>
             <span class="mode-chip" id="modeChip">人工确认</span>
           </div>
-          <div class="mode-selector" id="homeModeSelector" role="group" aria-label="执行模式">
-            <button class="mode-option is-active" type="button" data-execution-mode="review">
-              <span>人工确认</span><small>AI 筛选后由你确认再投递</small>
-            </button>
-            <button class="mode-option" type="button" data-execution-mode="auto">
-              <span>全自动投递</span><small>达标岗位自动以应聘者身份沟通</small>
-            </button>
-          </div>
           <div class="task-actions">
             <button class="button button-primary action-main" id="startTask">
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
@@ -59,7 +51,36 @@
           <article><span>已投递</span><strong id="statSent">0</strong><small>成功沟通</small></article>
         </section>
 
-        <article class="module-card readiness-card">
+        <details class="module-card collapsible" data-collapsible="current-task" open>
+          <summary>
+            <span><b>当前任务</b></span>
+            <i class="chevron"></i>
+          </summary>
+          <div class="module-body status-list">
+            <div class="status-row"><span>运行状态</span><strong id="workflowStatus">未开始</strong></div>
+            <div class="status-row"><span>当前阶段</span><strong id="workflowPhase">idle</strong></div>
+            <div class="status-row"><span>搜索任务</span><strong id="taskProgress">0 / 0</strong></div>
+            <div class="status-row"><span>当前岗位</span><strong id="currentJob">—</strong></div>
+            <div class="active-progress-card" id="activeProgressCard">
+              <div class="progress-title-row"><span><b>当前执行进度</b><small id="activeTaskStage">尚未开始</small></span><strong id="activeTaskPercent">0%</strong></div>
+              <div class="progress-track" role="progressbar" aria-label="当前执行进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="activeTaskProgress"><i id="activeTaskBar"></i></div>
+              <div class="progress-foot"><span id="activeTaskName">暂无正在处理的岗位</span><time id="activeTaskUpdated"></time></div>
+            </div>
+            <div class="search-task-heading"><span><b>搜索任务进度</b></span><strong id="searchTaskSummary">0 / 0</strong></div>
+            <div class="search-task-list" id="searchTaskList"></div>
+            <button class="button button-ghost danger full-width" id="abandonAllTasks" type="button" hidden>丢弃所有，重新开始</button>
+          </div>
+        </details>
+
+        <details class="module-card collapsible" data-collapsible="recent-events">
+          <summary>
+            <span><b>最近动态</b></span>
+            <i class="chevron"></i>
+          </summary>
+          <div class="module-body event-list compact" id="homeEvents"></div>
+        </details>
+
+        <article class="module-card readiness-card" id="readinessCard">
           <div class="module-title compact-title">
             <div><b>启动检查</b></div>
             <span class="pill" id="readinessPill">0 / 4</span>
@@ -79,34 +100,6 @@
             </button>
           </div>
         </article>
-
-        <details class="module-card collapsible" data-collapsible="current-task" open>
-          <summary>
-            <span><b>当前任务</b></span>
-            <i class="chevron"></i>
-          </summary>
-          <div class="module-body status-list">
-            <div class="status-row"><span>运行状态</span><strong id="workflowStatus">未开始</strong></div>
-            <div class="status-row"><span>当前阶段</span><strong id="workflowPhase">idle</strong></div>
-            <div class="status-row"><span>搜索任务</span><strong id="taskProgress">0 / 0</strong></div>
-            <div class="status-row"><span>当前岗位</span><strong id="currentJob">—</strong></div>
-            <div class="active-progress-card" id="activeProgressCard">
-              <div class="progress-title-row"><span><b>当前执行进度</b><small id="activeTaskStage">尚未开始</small></span><strong id="activeTaskPercent">0%</strong></div>
-              <div class="progress-track" role="progressbar" aria-label="当前执行进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="activeTaskProgress"><i id="activeTaskBar"></i></div>
-              <div class="progress-foot"><span id="activeTaskName">暂无正在处理的岗位</span><time id="activeTaskUpdated"></time></div>
-            </div>
-            <div class="search-task-heading"><span><b>搜索任务进度</b></span><strong id="searchTaskSummary">0 / 0</strong></div>
-            <div class="search-task-list" id="searchTaskList"></div>
-          </div>
-        </details>
-
-        <details class="module-card collapsible" data-collapsible="recent-events">
-          <summary>
-            <span><b>最近动态</b></span>
-            <i class="chevron"></i>
-          </summary>
-          <div class="module-body event-list compact" id="homeEvents"></div>
-        </details>
       </section>
 
       <section class="page" data-page-panel="resume" aria-labelledby="navResume">
@@ -183,7 +176,7 @@
             </div>
             <div class="button-row button-row-end sticky-actions">
               <button class="button button-secondary" id="regenerateProfile">从简历重建初稿</button>
-              <button class="button button-primary" id="saveProfile">保存职业画像</button>
+              <button class="button button-primary" id="saveProfile">保存并重新生成岗位方向</button>
             </div>
           </article>
 
@@ -247,18 +240,6 @@
           <div><strong id="messageNoticeTitle">人工确认后再投递</strong><p id="messageNoticeText">你可以修改求职招呼语，确认后 BossPilot 才会以应聘者身份联系招聘方。</p></div>
         </div>
 
-        <article class="module-card delivery-monitor-card">
-          <div class="module-title delivery-monitor-title">
-            <div><b>投递任务进度</b><small>投递步骤与结果</small></div>
-            <span class="pill accent" id="deliveryTaskPill">0 个任务</span>
-          </div>
-          <div class="delivery-toolbar" id="deliveryToolbar">
-            <span id="deliverySummary">暂无正在处理的投递任务</span>
-            <button class="button button-secondary small" id="retryAllFailedTasks" type="button" hidden>全部重试失败任务</button>
-          </div>
-          <div class="delivery-task-list" id="deliveryTaskList"></div>
-        </article>
-
         <details class="module-card collapsible" data-collapsible="pending-jobs" open>
           <summary>
             <span><b id="pendingSectionTitle">待确认岗位</b><small id="pendingSectionSubtitle">按 AI 匹配分从高到低排列</small></span>
@@ -266,6 +247,20 @@
           </summary>
           <div class="module-body"><div class="queue-batch-actions" id="queueBatchActions"><button class="button button-secondary" id="rejectAllPending" type="button">全部忽略</button><button class="button button-primary" id="approveAllPending" type="button">批量确认投递</button></div><div class="queue-list" id="pendingList"></div></div>
         </details>
+
+        <article class="module-card delivery-monitor-card">
+          <div class="module-title delivery-monitor-title">
+            <div><b>投递任务进度</b><small>投递步骤与结果</small></div>
+            <span class="pill accent" id="deliveryTaskPill">0 个任务</span>
+          </div>
+          <div class="delivery-toolbar" id="deliveryToolbar">
+            <span id="deliverySummary">暂无正在处理的投递任务</span>
+            <label class="delivery-select-all" id="deliverySelectAllLabel" hidden><input type="checkbox" id="deliverySelectAll"> 全选</label>
+            <button class="button button-ghost danger small" id="batchDeleteTasks" type="button" hidden>批量删除</button>
+            <button class="button button-secondary small" id="retryAllFailedTasks" type="button" hidden>全部重试失败任务</button>
+          </div>
+          <div class="delivery-task-list" id="deliveryTaskList"></div>
+        </article>
 
         <details class="module-card collapsible" data-collapsible="all-events">
           <summary>
@@ -277,9 +272,8 @@
       </section>
 
       <section class="page" data-page-panel="settings" aria-labelledby="navSettings">
-        <div class="page-heading page-heading-action">
+        <div class="page-heading">
           <div><span class="eyebrow">任务配置</span><h1>搜索与 AI</h1></div>
-          <button class="button button-primary small" id="saveSettings">保存设置</button>
         </div>
 
         <article class="module-card execution-mode-card">
@@ -306,13 +300,6 @@
             <i class="chevron"></i>
           </summary>
           <div class="module-body form-grid">
-            <label class="field"><span>目标城市</span><input id="locations" type="text" placeholder="例如：北京，上海，杭州"></label>
-            <label class="field"><span>求职类型</span><input id="types" type="text" placeholder="不限，全职，实习"></label>
-            <div class="field-grid two">
-              <label class="field"><span>工作经验</span><input id="experience" type="text" placeholder="在校/应届"></label>
-              <label class="field"><span>学历要求</span><input id="degree" type="text" placeholder="不限，本科，硕士"></label>
-            </div>
-            <label class="field"><span>薪资待遇</span><input id="salary" type="text" placeholder="不限"></label>
             <div class="field-grid two numeric-grid">
               <label class="field"><span>推荐分数</span><input id="minScore" type="number" min="0" max="100" step="1"></label>
               <label class="field"><span>每日成功投递目标</span><input id="dailyTarget" type="number" min="1" max="300" step="1"></label>
@@ -329,6 +316,9 @@
               <label class="switch-line"><input id="sendImage" type="checkbox"><span class="switch-ui"></span><span class="switch-copy"><b>发送简历图片</b><small id="sendImagePolicyText">人工确认后随招呼语发送</small></span></label>
               <label class="switch-line"><input id="sendOnline" type="checkbox"><span class="switch-ui"></span><span class="switch-copy"><b>发送在线简历</b><small id="sendOnlinePolicyText">页面存在入口时执行</small></span></label>
             </div>
+            <div class="button-row button-row-end">
+              <button class="button button-primary" id="saveSearchSettings">保存搜索条件</button>
+            </div>
           </div>
         </details>
 
@@ -344,6 +334,9 @@
             <label class="field"><span>API Key</span><input id="apiKey" type="password" autocomplete="off" placeholder="保存后显示 ***"></label>
             <label class="field"><span>自定义招呼语要求</span><textarea id="customInstruction" rows="4" maxlength="1600" placeholder="例如：语气简洁自然，优先强调 React 项目经验"></textarea><small>仅补充风格，不覆盖事实</small></label>
             <div class="button-row"><button class="button button-secondary" id="testAi">测试 AI 连接</button><span class="inline-result" id="aiTestResult"></span></div>
+            <div class="button-row button-row-end">
+              <button class="button button-primary" id="saveAiSettings">保存 AI 配置</button>
+            </div>
           </div>
         </details>
 

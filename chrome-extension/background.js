@@ -1505,12 +1505,58 @@ async function callModel(messages, jsonMode = true, options = {}) {
     throw aiError('AI_INVALID_RESPONSE', 'AI 接口返回了无法识别的响应');
   }
   const choice = result.choices?.[0];
-  const content = String(choice?.message?.content || '').trim();
+  let content = String(choice?.message?.content || '').trim();
+  // 某些模型（如 DeepSeek R1/V4）可能将输出放在 reasoning_content 而非 content
+  if (!content && choice?.message?.reasoning_content) {
+    content = String(choice.message.reasoning_content).trim();
+  }
   const usage = result.usage || {};
 
   const inputTokens = Number(usage.prompt_tokens || 0) || estimateTokenCount(messages);
   const outputTokens = Number(usage.completion_tokens || 0) || estimateTokenCount(content);
   const totalTokens = Number(usage.total_tokens || 0) || inputTokens + outputTokens;
+
+  // 返回为空时，尝试去掉 response_format 重试一次
+  if (!content && jsonMode && payload.response_format) {
+    const retryPayload = { ...payload };
+    delete retryPayload.response_format;
+    const retryResponse = await requestModel(url, retryPayload, model.apiKey, Number(options.timeoutMs || 90000));
+    const retryBody = await retryResponse.text();
+    if (!retryResponse.ok) {
+      await recordAiUsage({
+        requestType,
+        modelName: payload.model,
+        inputTokens,
+        outputTokens: 0,
+        totalTokens: 0,
+        durationMs: Date.now() - startTime,
+        success: false,
+        error: `AI 返回为空，重试无 response_format 失败 HTTP ${retryResponse.status}`
+      });
+      throw aiError('AI_EMPTY', 'AI 返回为空，且去掉 response_format 重试仍失败');
+    }
+    let retryResult;
+    try {
+      retryResult = JSON.parse(retryBody);
+    } catch {
+      await recordAiUsage({
+        requestType,
+        modelName: payload.model,
+        inputTokens,
+        outputTokens: 0,
+        totalTokens: 0,
+        durationMs: Date.now() - startTime,
+        success: false,
+        error: 'AI 返回为空，重试响应无法解析'
+      });
+      throw aiError('AI_EMPTY', 'AI 返回为空，重试响应无法解析');
+    }
+    const retryChoice = retryResult.choices?.[0];
+    content = String(retryChoice?.message?.content || '').trim();
+    if (!content && retryChoice?.message?.reasoning_content) {
+      content = String(retryChoice.message.reasoning_content).trim();
+    }
+  }
 
   await recordAiUsage({
     requestType,
@@ -1522,10 +1568,45 @@ async function callModel(messages, jsonMode = true, options = {}) {
     success: true
   });
 
-  if (!content) throw aiError('AI_EMPTY', 'AI 返回为空');
-  if (choice.finish_reason === 'length') {
-    throw aiError('AI_TRUNCATED', 'AI 输出被截断', { finishReason: choice.finish_reason, partial: content });
+  if (!content) throw aiError('AI_EMPTY', 'AI 返回为空（已尝试 content 和 reasoning_content 字段）');
+
+  // 输出被截断时，用更大的 max_tokens 重试一次
+  if (choice.finish_reason === 'length' && Number(payload.max_tokens) < 8192) {
+    const retryPayload = { ...payload, max_tokens: 8192 };
+    const retryResponse = await requestModel(url, retryPayload, model.apiKey, Number(options.timeoutMs || 90000));
+    const retryBody = await retryResponse.text();
+    if (!retryResponse.ok) {
+      throw aiError('AI_TRUNCATED', `AI 输出被截断，重试失败 HTTP ${retryResponse.status}`, { finishReason: choice.finish_reason, partial: content });
+    }
+    let retryResult;
+    try {
+      retryResult = JSON.parse(retryBody);
+    } catch {
+      throw aiError('AI_TRUNCATED', 'AI 输出被截断，重试响应无法解析', { finishReason: choice.finish_reason, partial: content });
+    }
+    const retryChoice = retryResult.choices?.[0];
+    content = String(retryChoice?.message?.content || '').trim();
+    if (!content && retryChoice?.message?.reasoning_content) {
+      content = String(retryChoice.message.reasoning_content).trim();
+    }
+    const retryUsage = retryResult.usage || {};
+    await recordAiUsage({
+      requestType,
+      modelName: payload.model,
+      inputTokens: Number(retryUsage.prompt_tokens || 0) || estimateTokenCount(messages),
+      outputTokens: Number(retryUsage.completion_tokens || 0) || estimateTokenCount(content),
+      totalTokens: Number(retryUsage.total_tokens || 0),
+      durationMs: Date.now() - startTime,
+      success: true
+    });
+    if (!content) throw aiError('AI_EMPTY', 'AI 返回为空（截断重试后）');
+    if (retryChoice.finish_reason === 'length') {
+      throw aiError('AI_TRUNCATED', 'AI 输出仍被截断，max_tokens 已达 8192', { finishReason: retryChoice.finish_reason, partial: content });
+    }
+  } else if (choice.finish_reason === 'length') {
+    throw aiError('AI_TRUNCATED', 'AI 输出仍被截断，max_tokens 已达 8192', { finishReason: choice.finish_reason, partial: content });
   }
+
   if (!jsonMode) return content;
   try {
     return extractJson(content);
@@ -2379,6 +2460,16 @@ function buildJobMatchProfile(profile = {}, profileFacts = {}) {
   };
 }
 
+function buildJobAnalysisInput(job = {}) {
+  return {
+    title: String(job.title || '').slice(0, 160),
+    company: String(job.company || '').slice(0, 160),
+    salary: String(job.salary || '').slice(0, 80),
+    location: String(job.location || '').slice(0, 80),
+    description: String(job.description || '').slice(0, 3600)
+  };
+}
+
 function greetingCustomInstruction(config = {}) {
   return uniq([
     String(config.customInstruction || '').trim(),
@@ -2514,9 +2605,9 @@ async function analyzeJob(job, forceRefresh = false) {
       {
         role: 'user',
         content: `职业画像与结构化简历：${JSON.stringify(buildJobMatchProfile(profile, profileFacts))}
-岗位：${JSON.stringify(job)}`
+岗位：${JSON.stringify(buildJobAnalysisInput(job))}`
       }
-    ], true, { requestType: 'job_analysis' });
+    ], true, { maxTokens: aiMode === 'economy' ? 400 : 900, requestType: 'job_analysis' });
   const normalized = {
     score: Math.max(0, Math.min(100, Number(result.score || 0))),
     decision: ['recommend', 'cautious', 'reject'].includes(result.decision) ? result.decision : 'cautious',
@@ -2965,7 +3056,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         const resumeHash = await hashResumeText(resumeText || '');
         const profileDraft = profileToDraft(profile, profile.generation?.mode || 'generated');
         const directionPlan = buildDirectionPlan(profile, currentDirectionPlan, {
-          confirmed: false,
+          confirmed: true,
           preserveSelections: true,
           preserveEdits: true,
           preserveCustom: true
@@ -2998,12 +3089,8 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         const profileFacts = normalizeProfileFacts(profile.facts);
         const resumeHash = await hashResumeText(resumeText);
         const profileDraft = profileToDraft(profile, 'manual-save');
-        const keepDirectionConfirmation = Boolean(
-          currentDirectionPlan?.confirmed
-          && profileDirectionSignature(currentProfile || {}) === profileDirectionSignature(profile)
-        );
         const directionPlan = buildDirectionPlan(profile, currentDirectionPlan, {
-          confirmed: keepDirectionConfirmation,
+          confirmed: true,
           preserveSelections: true,
           preserveEdits: true,
           preserveCustom: true
@@ -3018,7 +3105,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
           salary: hard.salary || config.salary || '不限'
         };
         await storage.set({ profile, profileFacts, resumeHash, profileDraft, directionPlan, config: nextConfig });
-        await writeEvent('info', '职业画像已手动保存', { directions: profile.primaryDirections });
+        await writeEvent('info', '职业画像已保存，岗位方向已重新生成', { directions: profile.primaryDirections, directionCount: directionPlan.items?.length || 0 });
         reply({ ok: true, profile, profileDraft, directionPlan, config: nextConfig });
         break;
       }
@@ -3031,7 +3118,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         }
         if (!profileHasCore(profile)) throw new Error('请先生成职业画像');
         const directionPlan = buildDirectionPlan(profile, stored.directionPlan, {
-          confirmed: false,
+          confirmed: true,
           preserveSelections: false,
           preserveEdits: false,
           preserveCustom: true
@@ -3177,6 +3264,19 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         await writeEvent('info', '任务已停止');
         reply({ ok: true });
         break;
+      case 'ABANDON_ALL': {
+        const current = await storage.get(['stats', 'events']);
+        await storage.set({
+          workflow: { ...DEFAULTS.workflow },
+          pending: [],
+          taskRuns: [],
+          stats: { ...(current.stats || {}), pending: 0, failed: 0 },
+          chatTransition: null
+        });
+        await writeEvent('info', '所有任务已丢弃，可重新开始');
+        reply({ ok: true });
+        break;
+      }
       case 'AI_JOB':
         reply({ ok: true, result: await analyzeJob(message.job, Boolean(message.forceRefresh)) });
         break;
@@ -3281,6 +3381,14 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
       case 'IGNORE_FAILED_TASK':
         reply({ ok: true, run: await ignoreFailedTask(message.runId) });
         break;
+      case 'DELETE_TASK_RUN': {
+        const { taskRuns = [] } = await storage.get('taskRuns');
+        const filtered = taskRuns.filter(run => run.id !== message.runId);
+        await storage.set({ taskRuns: filtered });
+        await writeEvent('info', '已删除投递任务', { runId: message.runId });
+        reply({ ok: true, deleted: taskRuns.length - filtered.length > 0 });
+        break;
+      }
       case 'OPEN_TASK_JOB': {
         const url = String(message.url || '').trim();
         if (!/^https:\/\/(?:www|app)\.zhipin\.com\//i.test(url)) throw new Error('岗位地址无效');
