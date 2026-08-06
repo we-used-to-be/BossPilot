@@ -16,6 +16,12 @@ cd source
 npm test
 ```
 
+首次使用可启用本地推送校验：
+
+```bash
+git config core.hooksPath .githooks
+```
+
 完整测试包括：
 
 - 构建与 Manifest V3/CSP 校验

@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root/source"
+npm run scan:secrets
