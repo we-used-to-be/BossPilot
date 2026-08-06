@@ -15,7 +15,7 @@ if (!common.includes('discoveryLimit: 0')) throw new Error('默认采集配置�
 if (!common.includes('aiLimit: 0')) throw new Error('仍存在隐藏 AI 数量上限默认值');
 if (!common.includes("model: 'deepseek-v4-pro'")) throw new Error('默认模型不是 deepseek-v4-pro');
 if (html.includes('id="discoveryLimit"')) throw new Error('设置页仍暴露采集上限输入框');
-for (const token of ['岗位采集数量', '不设置采集上限', 'deepseek-v4-pro', 'deepseek-v4-flash']) {
+for (const token of ['岗位采集数量', '不设上限', '不限', 'deepseek-v4-pro', 'deepseek-v4-flash']) {
   if (!html.includes(token)) throw new Error(`设置页缺少：${token}`);
 }
 if (sidepanel.includes("$('discoveryLimit')")) throw new Error('sidepanel 仍读取采集上限输入框');
