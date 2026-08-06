@@ -18,10 +18,11 @@ for (const token of [
 
 const extractionIndex = content.indexOf('const job = adapter.extractJob(card);');
 const externalIndex = content.indexOf('const externalApplication = adapter.externalApplicationInfo();', extractionIndex);
-const aiIndex = content.indexOf("const ai = await send('AI_JOB'", extractionIndex);
-if (!(extractionIndex >= 0 && externalIndex > extractionIndex && aiIndex > externalIndex)) {
+const aiScheduleIndex = content.indexOf('analysisPool.start(() => analyzeCollectedJob', extractionIndex);
+if (!(extractionIndex >= 0 && externalIndex > extractionIndex && aiScheduleIndex > externalIndex)) {
   throw new Error('外部网申岗位必须在 AI 分析和投递前被跳过');
 }
+if (!content.includes("const ai = await send('AI_JOB'")) throw new Error('岗位 AI 分析调用缺失');
 
 for (const token of [
   'async function skipPendingTask',

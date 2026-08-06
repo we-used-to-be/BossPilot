@@ -4,7 +4,7 @@ const out = 'dist/chrome-extension';
 await rm('dist', { recursive: true, force: true });
 await mkdir(out, { recursive: true });
 
-for (const file of ['background.js', 'common.js', 'content-v37.js', 'sidepanel.js', 'pdf-extractor.js', 'offscreen.js']) {
+for (const file of ['background.js', 'common.js', 'content-v37.js', 'sidepanel.js', 'pdf-extractor.js', 'pdf-worker.js', 'offscreen.js']) {
   await cp(`src/${file}`, `${out}/${file}`);
 }
 await cp('src/lib', `${out}/lib`, { recursive: true });

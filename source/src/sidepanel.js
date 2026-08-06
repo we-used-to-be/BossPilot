@@ -1267,9 +1267,41 @@ function isLikelyGarbledText(text) {
   return readable / compact.length < .5 || symbols / compact.length > .42 || (lines.length > 12 && tinyLines / lines.length > .55);
 }
 
+const PDF_WORKER_MIN_BYTES = 256 * 1024;
+const PDF_WORKER_TIMEOUT_MS = 30_000;
+
+async function extractPdfTextInWorker(arrayBuffer) {
+  if (arrayBuffer.byteLength < PDF_WORKER_MIN_BYTES || typeof Worker !== 'function') {
+    return extractPdfText(arrayBuffer);
+  }
+
+  let worker = null;
+  try {
+    worker = new Worker(chrome.runtime.getURL('pdf-worker.js'), { type: 'module' });
+    const workerBuffer = arrayBuffer.slice(0);
+    return await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('PDF Worker 解析超时')), PDF_WORKER_TIMEOUT_MS);
+      worker.onmessage = event => {
+        clearTimeout(timeout);
+        if (event.data?.ok) resolve(event.data.result);
+        else reject(new Error(event.data?.error || 'PDF Worker 解析失败'));
+      };
+      worker.onerror = event => {
+        clearTimeout(timeout);
+        reject(new Error(event.message || 'PDF Worker 运行失败'));
+      };
+      worker.postMessage({ id: 'extract', arrayBuffer: workerBuffer }, [workerBuffer]);
+    });
+  } catch {
+    return extractPdfText(arrayBuffer);
+  } finally {
+    worker?.terminate();
+  }
+}
+
 async function parsePdf(file) {
   const arrayBuffer = await file.arrayBuffer();
-  const deep = await extractPdfText(arrayBuffer);
+  const deep = await extractPdfTextInWorker(arrayBuffer);
   if (isReadableResumeText(deep.text)) return deep;
 
   // Keep the RC12 stream parser as a second browser-only fallback for unusual but unencrypted PDFs.

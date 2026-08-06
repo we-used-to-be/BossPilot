@@ -2201,6 +2201,25 @@ async function pauseForVerification() {
   });
 }
 
+function createBoundedTaskPool(limit = 2) {
+  const active = new Set();
+  const maxActive = Math.max(1, Number(limit) || 1);
+  return {
+    async waitForSlot() {
+      while (active.size >= maxActive) await Promise.race(active);
+    },
+    start(task) {
+      const pending = Promise.resolve().then(task);
+      active.add(pending);
+      pending.then(() => active.delete(pending), () => active.delete(pending));
+      return pending;
+    },
+    async drain() {
+      await Promise.all(active);
+    }
+  };
+}
+
 async function processApproved(state) {
   const id = state.workflow?.pendingApplyId;
   if (!id) return false;
@@ -2501,11 +2520,113 @@ async function processSearch(state) {
   }
 
   const processed = new Set(workflow.processedKeys || []);
+  const analysisPool = createBoundedTaskPool(2);
+  let autoDispatchRequested = false;
+  let autoDispatchStarted = false;
+  const analyzeCollectedJob = async ({ job, runId, activeConfig }) => {
+    try {
+      const ai = await send('AI_JOB', { job });
+      analyzedCount += 1;
+      await send('STATS', { delta: { analyzed: 1 } });
+      if (!ai.ok) {
+        failedCount += 1;
+        await updateTaskProgress({
+          runId, job, task, stage: 'failed', progress: 100,
+          stageLabel: 'AI 分析失败', status: 'failed', error: ai.error || 'AI 分析失败', retryable: false
+        });
+        await send('EVENT', { level: 'error', message: '岗位 AI 分析失败，已继续下一个岗位', data: { job, error: ai.error, runId } });
+        await updateSearchProgress(task, taskIndex, {
+          status: 'running', progress: Math.min(88, 22 + processedCount * 2), stageLabel: `持续扫描 · 已处理 ${processedCount} 个`,
+          processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
+        });
+        return;
+      }
+      await updateTaskProgress({
+        runId, job, task, stage: 'ai_complete', progress: 56,
+        stageLabel: `AI 分析完成 · ${ai.result.score || 0} 分`, status: 'running', analysis: ai.result, retryable: false
+      });
+      await send('EVENT', {
+        level: ai.result.decision === 'recommend' ? 'success' : 'info',
+        message: `岗位分析完成：${job.title}`,
+        data: { job, analysis: ai.result, runId }
+      });
+      if (ai.result.decision === 'recommend' && ai.result.score >= Number(activeConfig.minScore || 75)) {
+        const queued = await send('PENDING', { item: { job, analysis: ai.result, task, runId } });
+        if (queued.ok && activeConfig.executionMode === 'auto') {
+          await send('EVENT', {
+            level: 'success',
+            message: `已进入自动排序队列：${job.title}`,
+            data: {
+              job,
+              score: ai.result.score,
+              priorityScore: queued.item?.priorityScore || 0,
+              priorityRank: queued.item?.priorityRank || 0,
+              runId
+            }
+          });
+          // 先积累一小批合格岗位，再按 AI 匹配、硬条件、薪资和新鲜度排序。
+          // 避免采到第一个岗位就立刻投递，导致后续更优岗位永远排在后面。
+          const latestQueue = await send('CONTENT_STATE');
+          const queueDepth = (latestQueue.state?.pending || []).filter(entry => entry.status === 'approved_queue').length;
+          if (queueDepth >= 5 && !autoDispatchRequested) {
+            autoDispatchRequested = true;
+            const dispatched = await send('AUTO_DISPATCH_NEXT');
+            if (dispatched?.started) {
+              autoDispatchStarted = true;
+              await updateSearchProgress(task, taskIndex, {
+                status: 'running', progress: Math.min(88, 22 + processedCount * 2),
+                stageLabel: `已自动排序，优先投递最高分岗位`,
+                processed: processedCount, discovered: discoveredCount,
+                analyzed: analyzedCount, failed: failedCount
+              });
+              return;
+            }
+            autoDispatchRequested = false;
+          }
+        }
+      } else {
+        await updateTaskProgress({
+          runId, job, task, stage: 'skipped', progress: 100,
+          stageLabel: ai.result.decision === 'reject' ? '硬条件不匹配' : '未达到推荐阈值',
+          status: 'skipped', analysis: ai.result, retryable: false
+        });
+      }
+      await updateSearchProgress(task, taskIndex, {
+        status: 'running', progress: Math.min(88, 22 + processedCount * 2), stageLabel: `持续扫描 · 已处理 ${processedCount} 个`,
+        processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
+      });
+    } catch (error) {
+      failedCount += 1;
+      await updateTaskProgress({
+        runId, job, task, stage: 'failed', progress: 100,
+        stageLabel: '岗位处理异常', status: 'failed', error: error.message, retryable: false
+      });
+      await send('EVENT', {
+        level: 'warning',
+        message: '当前岗位处理异常，已跳过并继续采集',
+        data: { job, error: error.message, task, runId }
+      });
+      await updateSearchProgress(task, taskIndex, {
+        status: 'running', progress: Math.min(88, 22 + processedCount * 2), stageLabel: `持续扫描 · 已处理 ${processedCount} 个`,
+        processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
+      });
+    }
+  };
   let index = Math.max(0, workflow.cardIndex || 0);
   while (true) {
-    if (hasVerification()) return pauseForVerification();
+    await analysisPool.waitForSlot();
+    if (autoDispatchStarted) break;
+
+    if (hasVerification()) {
+      await pauseForVerification();
+      await analysisPool.drain();
+      return;
+    }
     const latest = await send('CONTENT_STATE');
-    if (!latest.ok || latest.state.workflow?.paused || !latest.state.workflow?.running) return;
+    if (!latest.ok || latest.state.workflow?.paused || !latest.state.workflow?.running) {
+      await analysisPool.drain();
+      return;
+    }
     const activeConfig = latest.state.config || config;
     if (Number(latest.state.stats?.sent || 0) >= Number(activeConfig.dailyTarget || 150)) {
       await updateSearchProgress(task, taskIndex, {
@@ -2513,6 +2634,7 @@ async function processSearch(state) {
         processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
       });
       await send('WORKFLOW', { patch: { running: false, paused: true, phase: 'idle', activeRunId: null, statusText: `已完成今日 ${latest.state.stats?.sent || 0} 次成功投递` } });
+      await analysisPool.drain();
       return;
     }
 
@@ -2626,73 +2748,7 @@ async function processSearch(state) {
         runId, job, task, stage: 'ai_analyze', progress: 42,
         stageLabel: 'AI 匹配分析', status: 'running', retryable: false, setActive: true
       });
-      const ai = await send('AI_JOB', { job });
-      analyzedCount += 1;
-      await send('STATS', { delta: { analyzed: 1 } });
-      if (!ai.ok) {
-        failedCount += 1;
-        await updateTaskProgress({
-          runId, job, task, stage: 'failed', progress: 100,
-          stageLabel: 'AI 分析失败', status: 'failed', error: ai.error || 'AI 分析失败', retryable: false
-        });
-        await send('EVENT', { level: 'error', message: '岗位 AI 分析失败，已继续下一个岗位', data: { job, error: ai.error, runId } });
-        await updateSearchProgress(task, taskIndex, {
-          status: 'running', progress: Math.min(88, 22 + processedCount * 2), stageLabel: `持续扫描 · 已处理 ${processedCount} 个`,
-          processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
-        });
-        continue;
-      }
-      await updateTaskProgress({
-        runId, job, task, stage: 'ai_complete', progress: 56,
-        stageLabel: `AI 分析完成 · ${ai.result.score || 0} 分`, status: 'running', analysis: ai.result, retryable: false
-      });
-      await send('EVENT', {
-        level: ai.result.decision === 'recommend' ? 'success' : 'info',
-        message: `岗位分析完成：${job.title}`,
-        data: { job, analysis: ai.result, runId }
-      });
-      if (ai.result.decision === 'recommend' && ai.result.score >= Number(activeConfig.minScore || 75)) {
-        const queued = await send('PENDING', { item: { job, analysis: ai.result, task, runId } });
-        if (queued.ok && activeConfig.executionMode === 'auto') {
-          await send('EVENT', {
-            level: 'success',
-            message: `已进入自动排序队列：${job.title}`,
-            data: {
-              job,
-              score: ai.result.score,
-              priorityScore: queued.item?.priorityScore || 0,
-              priorityRank: queued.item?.priorityRank || 0,
-              runId
-            }
-          });
-          // 先积累一小批合格岗位，再按 AI 匹配、硬条件、薪资和新鲜度排序。
-          // 避免采到第一个岗位就立刻投递，导致后续更优岗位永远排在后面。
-          const latestQueue = await send('CONTENT_STATE');
-          const queueDepth = (latestQueue.state?.pending || []).filter(entry => entry.status === 'approved_queue').length;
-          if (queueDepth >= 5) {
-            const dispatched = await send('AUTO_DISPATCH_NEXT');
-            if (dispatched?.started) {
-              await updateSearchProgress(task, taskIndex, {
-                status: 'running', progress: Math.min(88, 22 + processedCount * 2),
-                stageLabel: `已自动排序，优先投递最高分岗位`,
-                processed: processedCount, discovered: discoveredCount,
-                analyzed: analyzedCount, failed: failedCount
-              });
-              return;
-            }
-          }
-        }
-      } else {
-        await updateTaskProgress({
-          runId, job, task, stage: 'skipped', progress: 100,
-          stageLabel: ai.result.decision === 'reject' ? '硬条件不匹配' : '未达到推荐阈值',
-          status: 'skipped', analysis: ai.result, retryable: false
-        });
-      }
-      await updateSearchProgress(task, taskIndex, {
-        status: 'running', progress: Math.min(88, 22 + processedCount * 2), stageLabel: `持续扫描 · 已处理 ${processedCount} 个`,
-        processed: processedCount, discovered: discoveredCount, analyzed: analyzedCount, failed: failedCount
-      });
+      analysisPool.start(() => analyzeCollectedJob({ job, runId, activeConfig }));
       await sleep(600);
     } catch (error) {
       processed.add(key);
@@ -2723,6 +2779,9 @@ async function processSearch(state) {
       await sleep(420);
     }
   }
+
+  await analysisPool.drain();
+  if (autoDispatchStarted) return;
 
   const endState = await send('CONTENT_STATE');
   if (endState?.state?.config?.executionMode === 'auto') {

@@ -12,6 +12,10 @@ const storage = {
 };
 
 const debuggerLocks = new Map();
+const SEARCH_PROGRESS_WRITE_DELAY_MS = 250;
+const pendingSearchProgressWrites = new Map();
+const JOB_CACHE_MAX_ENTRIES = 200;
+let jobCacheWriteQueue = Promise.resolve();
 
 const OFFSCREEN_DOCUMENT_PATH = 'offscreen.html';
 let offscreenCreation = null;
@@ -1093,6 +1097,46 @@ async function updateSearchTaskProgress(message = {}) {
   nextWorkflow.tasks = tasks;
   await storage.set({ workflow: nextWorkflow });
   return tasks[targetIndex];
+}
+
+function searchProgressKey(message = {}) {
+  return String(message.taskId || (Number.isInteger(message.taskIndex) ? `index:${message.taskIndex}` : ''));
+}
+
+function compactProgressMessage(message = {}) {
+  return Object.fromEntries(Object.entries(message).filter(([, value]) => value !== undefined));
+}
+
+async function flushSearchTaskProgress(key) {
+  const pending = pendingSearchProgressWrites.get(key);
+  if (!pending) return null;
+  clearTimeout(pending.timer);
+  pendingSearchProgressWrites.delete(key);
+  return updateSearchTaskProgress(pending.message);
+}
+
+async function queueSearchTaskProgress(message = {}) {
+  const key = searchProgressKey(message);
+  const terminal = ['completed', 'failed', 'paused'].includes(String(message.status || ''));
+  if (!key) return updateSearchTaskProgress(message);
+
+  const current = pendingSearchProgressWrites.get(key);
+  const merged = {
+    ...(current?.message || {}),
+    ...compactProgressMessage(message)
+  };
+  if (terminal) {
+    if (current) clearTimeout(current.timer);
+    pendingSearchProgressWrites.delete(key);
+    return updateSearchTaskProgress(merged);
+  }
+
+  if (current) clearTimeout(current.timer);
+  const timer = setTimeout(() => {
+    flushSearchTaskProgress(key).catch(error => console.warn('搜索进度持久化失败', error));
+  }, SEARCH_PROGRESS_WRITE_DELAY_MS);
+  pendingSearchProgressWrites.set(key, { message: merged, timer });
+  return null;
 }
 
 async function retryFailedTask(runId) {
@@ -2579,6 +2623,24 @@ async function buildJobCacheKey(job, profileFacts) {
   return `${jobId}_${jdHashHex}_${resumeHash || 'no-resume'}`;
 }
 
+function pruneJobCache(cache, maxEntries = JOB_CACHE_MAX_ENTRIES) {
+  const entries = Object.entries(cache && typeof cache === 'object' && !Array.isArray(cache) ? cache : {});
+  return Object.fromEntries(entries.slice(-Math.max(1, maxEntries)));
+}
+
+async function writeJobCacheEntry(cacheKey, value) {
+  jobCacheWriteQueue = jobCacheWriteQueue.catch(() => {}).then(async () => {
+    const { jobCache } = await storage.get('jobCache');
+    const next = {
+      ...(jobCache && typeof jobCache === 'object' && !Array.isArray(jobCache) ? jobCache : {})
+    };
+    delete next[cacheKey];
+    next[cacheKey] = value;
+    await storage.set({ jobCache: pruneJobCache(next) });
+  });
+  await jobCacheWriteQueue;
+}
+
 async function analyzeJob(job, forceRefresh = false) {
   const { profile, config } = await storage.get(['profile', 'config']);
   if (!profile) throw new Error('请先生成职业画像');
@@ -2629,9 +2691,8 @@ async function analyzeJob(job, forceRefresh = false) {
     normalized.decision = 'cautious';
   }
 
-  // 写入缓存
-  cache[cacheKey] = normalized;
-  await storage.set({ jobCache: cache });
+  // 串行合并并限制缓存，兼容旧版无元数据的对象结构。
+  await writeJobCacheEntry(cacheKey, normalized);
 
   return normalized;
 }
@@ -3370,7 +3431,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
         break;
       }
       case 'SEARCH_TASK_PROGRESS':
-        reply({ ok: true, task: await updateSearchTaskProgress(message) });
+        reply({ ok: true, task: await queueSearchTaskProgress(message) });
         break;
       case 'RETRY_FAILED_TASK':
         reply({ ok: true, ...(await retryFailedTask(message.runId)) });

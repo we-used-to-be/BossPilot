@@ -2,31 +2,32 @@
 
 ## 当前状态
 
-- 当前阶段：阶段 2｜有界岗位分析流水线
-- 阶段状态：未开始
+- 当前阶段：阶段 3｜持久化与 PDF 响应优化
+- 阶段状态：已完成
 - 上次执行结果：
-  - 岗位匹配输入已收窄为标题、公司、薪资、地点和最多 3600 字符 JD
-  - 平衡/精准模式岗位匹配输出上限已降至 900 token，节省模式保持 400
-  - 新增 UI39 输入与输出边界回归，并精确同步三份后台脚本
+  - 250 ms 内非关键搜索进度合并写入，完成/失败/暂停终态立即持久化
+  - 岗位缓存串行合并并限制为最近 200 条，旧版对象缓存无需迁移即可复用
+  - 真实 PDF 基线超过主线程预算，≥256 KB 深度解析已迁移到模块 Worker，并保留兼容回退
+  - 新增 UI40 持久化/PDF 响应回归，运行文件已精确同步且未运行破坏性构建
 - 验证结果：
-  - `node tests/ui39-job-analysis-performance.mjs`：通过
-  - `node tests/ui38-ai-token-flow.mjs`：通过
-  - `npm run check:syntax`、`npm run test:unit`：通过
-  - UI18/UI20/UI24/UI30 投递安全定向回归：通过
-  - UI9：失败，现有 `source/public/sidepanel.html` 执行模式入口数量不符合旧测试，与本阶段后台改动无关
-  - 三份 `background.js` 语法、`git diff --check`：通过
+  - 基线：405 KB/5 页 PDF 暖态约 94 ms；3.09 MB/142 页 PDF 暖态约 1.51 s
+  - `node tests/ui40-persistence-pdf-response.mjs`：通过
+  - UI18 任务进度/重试、UI38 Token 流程、UI39 分析边界：通过
+  - `node tests/validate.mjs`、`npm run check:syntax`、`npm run test:unit`：通过
+  - 两份源码/`source/dist` 后台与侧栏脚本哈希分别一致，三份 PDF Worker 哈希一致
+  - `git diff --check`：通过
   - `npm run build`：未执行；构建脚本会删除并重建已有用户修改的 `source/dist/`
-- 本阶段剩余：
-  - 先用测试证明当前岗位详情与 AI 完全串行
-  - 设计最多 2 路 AI、单路 DOM 的有界流水线
-  - 验证自动排序、外部网申跳过、暂停与投递安全
+- 本阶段剩余：无
 - 本阶段允许修改：
-  - `source/src/content-v37.js`
-  - `source/tests/**`
-  - `chrome-extension/content-v37.js`
-  - `source/dist/chrome-extension/content-v37.js`
+  - `source/src/background.js`
+  - `source/src/sidepanel.js`
+  - `source/src/pdf-worker.js`
+  - `source/build.mjs`
+  - `source/tests/ui40-persistence-pdf-response.mjs`
+  - `chrome-extension/` 与 `source/dist/chrome-extension/` 对应运行文件
+  - `AI_IMPLEMENTATION_PLAN.md`
 - 阻塞问题：无
-- 下一阶段：阶段 3｜持久化与 PDF 响应优化
+- 下一阶段：无（阶段 3 完成后整体结束）
 
 ## 当前优化目标
 
@@ -83,16 +84,38 @@
 
 ## 当前阶段详细任务
 
+### 目标
+
+基于真实持久化与 PDF 响应基线，完成可测量、向后兼容的最小优化。
+
+### 允许修改
+
+- `source/src/background.js`
+- `source/src/sidepanel.js`
+- `source/src/pdf-worker.js`
+- `source/build.mjs`
+- `source/tests/ui40-persistence-pdf-response.mjs`
+- `chrome-extension/` 与 `source/dist/chrome-extension/` 对应运行文件
+- `AI_IMPLEMENTATION_PLAN.md`
+
 ### 实施任务
 
-1. 为结构化简历事实增加规范化、哈希、缓存复用与失效逻辑。
-2. 将岗位匹配 Prompt 收窄为职业画像、技能、项目摘要和岗位信息。
-3. 新增独立招呼语生成，并接入人工、批量、自动与重试投递入口。
-4. 设置页增加自定义招呼语要求，兼容 `customPrompt`/`customInstruction`。
-5. 增加 Token 输入边界、调用时机、缓存与安全规则测试。
+1. 测量非关键进度写入频率、岗位缓存增长边界与真实 PDF 解析耗时。
+2. 合并非关键搜索进度写入，终态保持立即持久化。
+3. 限制岗位缓存增长，并串行合并并发写入，兼容旧缓存对象。
+4. 将超过响应预算的 PDF 深度解析迁移到 Worker，保留原解析器回退。
+5. 增加定向回归并精确同步构建产物。
+
+### 验收标准
+
+- [x] 连续非关键搜索进度合并，终态立即写入。
+- [x] 岗位缓存最多保留最近 200 条，旧缓存无需清空或重建。
+- [x] ≥256 KB PDF 在 Worker 中解析，失败时兼容回退。
+- [x] 持久化、PDF、任务进度、Token 流程和语法定向验证通过。
 
 ### 禁止事项
 
+- 不清空或重建现有配置、缓存和用户数据。
 - 不修改现有会话锁、发送确认、附件顺序和外部网申跳过逻辑。
 - 不升级依赖，不重构无关模块。
 - 不提交或推送代码。
@@ -266,6 +289,20 @@ npm run test:unit
 - 完成内容：精简岗位匹配输入并限制 JD 为 3600 字符；岗位匹配输出限制为节省模式 400、其他模式 900 token；新增 UI39 性能边界契约。
 - 验证结果：UI39、UI38、语法、单元测试和 4 项投递安全定向回归通过；UI9 为现有页面与旧契约不一致；构建因保护已有 `source/dist/` 修改未执行，三份后台文件已精确同步并通过语法检查。
 - 遗留问题：真实模型延迟需在扩展实际运行后通过 `aiStats.records.durationMs` 对比；未宣称未测量的提速比例。
+
+### 阶段 2｜有界岗位分析流水线
+
+- 状态：已完成
+- 完成内容：UI40 先红证明串行缺口；实现单路 BOSS DOM 采集与最多 2 路 AI 分析的有界流水线；保留外部网申跳过、进度、自动排序、暂停/停止、安全验证、每日目标及投递会话安全语义。
+- 验证结果：UI24、UI30、UI40、语法、单元测试及 UI18/UI20/UI21/UI22 定向安全回归通过；三份内容脚本哈希一致；为保护已有 `source/dist/` 修改未运行构建。
+- 遗留问题：无。
+
+### 阶段 3｜持久化与 PDF 响应优化
+
+- 状态：已完成
+- 完成内容：合并 250 ms 内非关键搜索进度并即时保存终态；岗位缓存串行写入且保留最近 200 条；基于真实 PDF 基线将 ≥256 KB 深度解析迁移到 Worker，并保留兼容回退。
+- 验证结果：UI40、UI18、UI38、UI39、validate、语法和单元测试通过；运行文件精确同步；`git diff --check` 通过；为保护已有 `source/dist/` 修改未运行构建。
+- 遗留问题：真实浏览器中的交互帧延迟未做自动化采样；Worker 迁移依据为现有解析器在真实 PDF 上的耗时基线。
 
 ### 阶段 1｜移除 OpenClaw 相关内容
 
